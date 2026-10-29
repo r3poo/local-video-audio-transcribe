@@ -58,6 +58,9 @@ Both routes install the `python-whisper` command (`uv run python-whisper …` or
 `.venv/bin/python-whisper …`). A checkout also still works via `python cli.py …`,
 which is a thin shim onto `whisper_pipeline/cli.py`.
 
+`python scripts/check_runtime.py` prints which ONNX Runtime the install actually
+uses — the one check worth running whenever sherpa-onnx refuses to load a model.
+
 A built wheel contains the library and the CLI; the Streamlit UI (`app.py`) stays in
 the checkout, where `uv run streamlit run app.py` picks up the same environment.
 
@@ -228,6 +231,7 @@ word. Models without word timings fall back to proportional timing.
 | `whisper_pipeline/audio.py` | PyAV probing, block-wise decode + resample to 16 kHz mono |
 | `whisper_pipeline/models.py` | Declarative model catalogue, disk introspection, provider detection |
 | `whisper_pipeline/engine.py` | `Transcriber` (model + lock), Silero VAD segmenter, fixed-window segmenter, word timing |
+| `whisper_pipeline/ort_runtime.py` | Locates `sherpa_onnx/lib`, preloads the bundled ONNX Runtime on Windows, reports which one is loaded |
 | `whisper_pipeline/pipeline.py` | Orchestration: decode → segment → recognise → `TranscriptionResult` |
 | `whisper_pipeline/subtitles.py` | SRT/VTT/TXT/JSON rendering and cue splitting |
 | `app.py` / `cli.py` | Streamlit front end / command line front end |
@@ -247,13 +251,18 @@ multiple threads and a single recogniser cannot be used concurrently.
 
 ## Troubleshooting
 
+Start with `python scripts/check_runtime.py`: it prints the bindings version, the
+runtime bundled with `sherpa-onnx-core`, the runtime the process has actually
+mapped, and the ORT version in use.
+
 | Symptom | Cause / fix |
 | --- | --- |
 | `No models found in models/` | Run `python scripts/download_models.py` |
 | GPU option missing, providers `('cpu',)` | CPU-only wheel — see *GPU setup* |
 | `GPU was requested but … running on CPU` | CUDA provider present but failed to initialise (driver/cuDNN mismatch) |
-| `The requested API version [28] is not available, only [1, 17] …` | Two engine releases in one venv: bindings want ORT 1.28.2, the loaded `libonnxruntime.so` is 1.17.1. Install one tagged CUDA wheel and remove `onnxruntime[-gpu]` and `sherpa-onnx-core` — see *GPU setup* |
-| `ImportError: libonnxruntime.so: cannot open shared object file` | `sherpa-onnx-core` missing or pruned — `uv pip install sherpa-onnx-core==<same version as sherpa-onnx>` |
+| `The requested API version [28] is not available, only [1, 17] …` (Linux) | Two engine releases in one venv: bindings want ORT 1.28.2, the loaded `libonnxruntime.so` is 1.17.1. Install one tagged CUDA wheel and remove `onnxruntime[-gpu]` and `sherpa-onnx-core` — see *GPU setup* |
+| Same message on Windows, `Current ORT Version is: 1.17.1` | `sherpa_onnx/lib/onnxruntime.dll` is missing (`sherpa-onnx-core` absent) or `C:\Windows\System32\onnxruntime.dll` (Windows ML) / an `onnxruntime` package was loaded first. The app maps the bundled DLL at import, so nothing else in the process may import ONNX Runtime earlier. Install `sherpa-onnx-core==<same version as sherpa-onnx>`, `pip uninstall onnxruntime onnxruntime-gpu onnxruntime-directml`, then re-run the check script |
+| `ImportError: libonnxruntime.so: cannot open shared object file` (Linux) or `ImportError: DLL load failed while importing _sherpa_onnx` (Windows) | `sherpa-onnx-core` missing or pruned — `pip install sherpa-onnx-core==<same version as sherpa-onnx>` |
 | Garbled or missing words at chunk edges | VAD disabled — remove `--no-vad` |
 | Much slower than RTF 0.1 | Other work on the box, or `--threads` set to 1 |
 

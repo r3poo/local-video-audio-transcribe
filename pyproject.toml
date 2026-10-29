@@ -38,10 +38,15 @@ dependencies = [
   # ONNX Runtime speech engine. PyPI wheels are CPU-only; see the note at the
   # bottom of this file for the CUDA build.
   "sherpa-onnx>=1.12,<2",
-  # The wheel's own Requires-Dist pins this, but the metadata uv resolves from
-  # PyPI's JSON omits it, so `uv sync` alone installs the Python bindings without
-  # libonnxruntime.so. Bump both together when upgrading the engine.
-  "sherpa-onnx-core==1.13.8; sys_platform == 'linux'",
+  # The bindings wheel holds no runtime: onnxruntime.dll / libonnxruntime.so /
+  # libonnxruntime.dylib comes from this companion wheel, and the two must be the
+  # same release. The wheel's own Requires-Dist pins it, but the metadata uv
+  # resolves from PyPI's JSON omits it, so without this line `uv sync` installs
+  # the bindings alone and sherpa-onnx binds to whichever onnxruntime the system
+  # offers - on Windows that is the ONNX Runtime 1.17.1 copy in System32, which
+  # dies with "requested API version [28] is not available, only [1, 17]".
+  # Bump both lines together when upgrading the engine.
+  "sherpa-onnx-core==1.13.8",
   "streamlit>=1.36,<2",
 ]
 

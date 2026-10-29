@@ -4,8 +4,13 @@
 streamlit>=1.36,<2
 numpy>=1.26,<3
 
-# ONNX Runtime speech engine (CUDA wheels: see requirements-gpu.txt)
+# ONNX Runtime speech engine (CUDA wheels: see requirements-gpu.txt).
+# The bindings wheel carries no runtime: sherpa-onnx-core supplies onnxruntime.dll
+# (Windows), libonnxruntime.so (Linux) or libonnxruntime.dylib (macOS), and both
+# packages must be the same release. pip pulls core in through Requires-Dist; the
+# explicit pin keeps them moving together.
 sherpa-onnx>=1.12,<2
+sherpa-onnx-core==1.13.8
 
 # Media demux/decoding with bundled FFmpeg libraries - no system ffmpeg needed
 av>=12,<21

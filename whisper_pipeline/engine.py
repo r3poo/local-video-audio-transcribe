@@ -19,8 +19,8 @@ from pathlib import Path
 from typing import Protocol
 
 import numpy as np
-import sherpa_onnx as so
 
+from . import ort_runtime
 from .models import (
     FAMILY_NEMO_CTC,
     FAMILY_PARAFORMER,
@@ -31,6 +31,13 @@ from .models import (
     vad_model_path,
 )
 from .types import Word
+
+# On Windows, ``onnxruntime.dll`` is resolved by base name and the Windows ML copy
+# in System32 outranks the sherpa-onnx package directory, so the bundled runtime
+# has to be mapped first.  Nothing may import sherpa_onnx before this call.
+ort_runtime.prepare()
+
+import sherpa_onnx as so  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -389,11 +396,7 @@ class Transcriber:
 
         joined = " | ".join(errors)
         if "API version" in joined:
-            joined += (
-                " — the sherpa-onnx bindings and the libonnxruntime.so they load come from "
-                "different ONNX Runtime releases; install the engine as one matched set "
-                "(README: GPU setup)"
-            )
+            joined += " — " + ort_runtime.mismatch_hint()
         raise ModelLoadError(f"could not load {self.spec.label}: " + joined)
 
     @property
