@@ -1,0 +1,11 @@
+# CPU-only install (the default). Works on Linux, macOS and Windows.
+# Linux/macOS:  python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+# Windows:      py -3 -m venv .venv && .venv\Scripts\pip install -r requirements.txt
+streamlit>=1.36,<2
+numpy>=1.26,<3
+
+# ONNX Runtime speech engine (CUDA wheels: see requirements-gpu.txt)
+sherpa-onnx>=1.12,<2
+
+# Media demux/decoding with bundled FFmpeg libraries - no system ffmpeg needed
+av>=12,<21

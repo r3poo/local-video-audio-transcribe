@@ -1,0 +1,28 @@
+# Virtual environment
+.venv/
+venv/
+
+# Downloaded model weights (~1.1 GB) - fetch with scripts/download_models.py
+models/
+
+# Generated transcripts
+out/
+*.srt
+*.vtt
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Streamlit
+.streamlit/secrets.toml

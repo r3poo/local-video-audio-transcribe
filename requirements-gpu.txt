@@ -1,0 +1,26 @@
+# GPU (NVIDIA CUDA) install - Linux x86_64.
+#
+# The k2-fsa wheels are tagged with the ONNX Runtime they bundle:
+#   sherpa_onnx-1.13.8+cuda12.cudnn9.onnxruntime1.28.2-cp313-cp313-linux_x86_64.whl
+# Wheels named "+cuda" with no onnxruntimeX.Y.Z tag link against an externally
+# installed onnxruntime[-gpu] instead, and then a version drift in that package
+# produces:
+#   "The requested API version [28] is not available, only [1, 17] are supported
+#    in this build. Current ORT Version is: 1.17.1"
+#
+# So: remove the CPU engine and any onnxruntime copy, then install ONE tagged wheel
+# whose cp3XX tag matches your interpreter:
+#
+#   pip install -r requirements.txt
+#   pip uninstall -y sherpa-onnx sherpa-onnx-core onnxruntime onnxruntime-gpu
+#   pip install "https://huggingface.co/csukuangfj2/sherpa-onnx-wheels/resolve/main/cuda/1.13.8/sherpa_onnx-1.13.8+cuda12.cudnn9.onnxruntime1.28.2-cp313-cp313-linux_x86_64.whl"
+#
+# Verify (the ORT version must match the tag in the filename):
+#
+#   .venv/bin/python -c "import sherpa_onnx as so; from whisper_pipeline.models import \
+#       available_providers as p; print(p(), so.onnxruntime_version)"
+#   # ('cpu', 'cuda') 1.28.2
+#
+# Requires a matching CUDA runtime + cuDNN (e.g. an nvidia/cuda:12.x base image).
+# See README > GPU setup. This file intentionally pins nothing: the wheel URL above is
+# the install unit for the GPU route.
