@@ -24,6 +24,7 @@ from whisper_pipeline import (
     bundle_zip,
     expand_inputs,
     models,
+    parse_path_text,
     probe,
     run_batch,
     transcribe_file,
@@ -215,7 +216,11 @@ def pick_media() -> list[Path]:
             height=132,
             placeholder="/path/to/recording.mp4\n/path/to/a/folder/of/clips",
         )
-        note = "One path per line. A directory is expanded recursively to media files."
+        note = (
+            "One path per line. A directory is expanded recursively to media files. "
+            "Quotes are fine — paste `\"C:\\Videos\\My clip.mp4\"`, `'talk.m4a'`, or a "
+            "whole multi-selection copied from Explorer, spaces and all."
+        )
         if example is not None:
             note += (
                 f" Pre-filled with the sample clip found in the workspace `{example.name}` — "
@@ -226,7 +231,7 @@ def pick_media() -> list[Path]:
     if uploads:
         return [save_upload(upload) for upload in uploads]
 
-    raw = [line.strip() for line in typed.splitlines() if line.strip()]
+    raw = parse_path_text(typed)
     if not raw:
         return []
     paths, problems = expand_inputs(raw)

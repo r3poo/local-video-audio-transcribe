@@ -113,7 +113,9 @@ Whisper.
 
 - Pick a model, device and thread count in the sidebar.
 - Upload one file or several (the uploader takes a multi-selection), or drop a list of
-  paths into the `Local paths` box — one per line, directories welcome. More than one
+  paths into the `Local paths` box — one per line, directories welcome. Quotes are
+  stripped, so a path copied from Explorer (`"C:\\Videos\\My clip.mp4"`), a shell
+  (`'/home/me/talk.m4a'`) or a whole quoted multi-selection pastes cleanly. More than one
   file switches the page into batch mode: a queue table, one progress bar for the whole
   queue, then batch totals, a per-file status table and a **zip** with every transcript.
 - Review the transcript, the segment table, the generated subtitles and the JSON
@@ -141,6 +143,9 @@ python-whisper talks/*.mkv -m parakeet-tdt-0.6b-v2 \
 
 # resume a queue: skip anything whose requested outputs already exist
 python-whisper talks/ --skip-existing
+
+# quoted paths are unwrapped, including one quoted multi-selection
+python-whisper '"talks/episode 1.mp4" "talks/episode 2.mp4"'
 
 # a specific audio track, no VAD
 python-whisper film.mkv --stream 2 --no-vad

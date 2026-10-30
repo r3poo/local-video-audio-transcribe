@@ -137,6 +137,79 @@ def _is_hidden(relative: Path) -> bool:
     return any(part.startswith(".") for part in relative.parts)
 
 
+#: Opening quote -> matching closer, for the styles that reach a paste box.
+_QUOTES = {'"': '"', "'": "'", "\u201c": "\u201d", "\u2018": "\u2019"}
+
+
+def clean_path(raw: str) -> str:
+    """Strip whitespace and surrounding quotes from one pasted path.
+
+    ``"C:\\Videos\\My clip.mp4"``, ``'talk.mp4'`` and the curly variants that
+    office software produces all resolve to the bare path. Nested pairs
+    (``"'x'"``) are unwrapped too; a lopsided quote is left alone, because
+    guessing which side was meant is worse than reporting the file as missing.
+    """
+    text = raw.strip().lstrip("\ufeff").strip()
+    changed = True
+    while changed and len(text) >= 2:
+        changed = False
+        if _QUOTES.get(text[0]) == text[-1] and text[1:-1].strip():
+            text = text[1:-1].strip()
+            changed = True
+    return text
+
+
+def _tokenize(line: str) -> list[str]:
+    """Split one line into paths, keeping quoted runs (and their spaces) whole."""
+    tokens: list[str] = []
+    buffer: list[str] = []
+    closing: str | None = None
+    for char in line:
+        if closing is not None:
+            if char == closing:
+                closing = None
+            else:
+                buffer.append(char)
+        elif char in _QUOTES and not buffer:
+            closing = _QUOTES[char]
+        elif char.isspace():
+            if buffer:
+                tokens.append("".join(buffer))
+                buffer = []
+        else:
+            buffer.append(char)
+    if buffer:
+        tokens.append("".join(buffer))
+    return [token for token in tokens if token.strip()]
+
+
+def parse_path_text(text: str) -> list[str]:
+    """Extract paths from what a user pasted into a multi-line box.
+
+    One path per line, but each line may also be quoted — including several
+    quoted paths on one line, which is exactly what Windows Explorer's *Copy as
+    path* produces for a multi-selection. When a line contains no quotes it is
+    taken whole, so an unquoted path with spaces still works. Ambiguity is
+    settled by the filesystem: if the tokens exist, they are separate files;
+    otherwise the line is treated as one path and the caller reports it missing.
+    """
+    entries: list[str] = []
+    for line in text.splitlines():
+        line = line.strip().lstrip("\ufeff").strip()
+        if not line:
+            continue
+        tokens = _tokenize(line)
+        if len(tokens) <= 1:
+            entries.extend(clean_path(token) for token in tokens or [line])
+        elif any(Path(clean_path(token)).expanduser().exists() for token in tokens):
+            entries.extend(clean_path(token) for token in tokens)
+        elif Path(clean_path(line)).expanduser().exists():
+            entries.append(clean_path(line))
+        else:
+            entries.extend(clean_path(token) for token in tokens)
+    return [entry for entry in entries if entry]
+
+
 def expand_inputs(paths: Sequence[str | Path]) -> tuple[list[Path], list[str]]:
     """Resolve files and directories into an ordered, de-duplicated file list.
 
@@ -160,7 +233,10 @@ def expand_inputs(paths: Sequence[str | Path]) -> tuple[list[Path], list[str]]:
             files.append(key)
 
     for raw in paths:
-        candidate = Path(raw).expanduser()
+        text = clean_path(str(raw))
+        if not text:
+            continue
+        candidate = Path(text).expanduser()
         if candidate.is_dir():
             for child in sorted(candidate.rglob("*")):
                 if not child.is_file() or child.suffix.lower() not in MEDIA_EXTENSIONS:
