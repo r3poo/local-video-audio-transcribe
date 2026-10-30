@@ -3,7 +3,7 @@
 Installed as the ``python-whisper`` command by ``pyproject.toml``:
 
     python-whisper clip.mp4 -f txt,srt,vtt
-    python-whisper clips/*.mkv -m parakeet-tdt-0.6b-v2 --threads 4
+    python-whisper clips/ -m parakeet-tdt-0.6b-v2 --threads 4 --skip-existing
 """
 
 from __future__ import annotations
@@ -22,11 +22,12 @@ from . import (
     default_model,
     get_model,
     probe,
-    transcribe_file,
 )
+from .batch import BatchItem, expand_inputs, run_batch
+from .export import FORMATS  # noqa: F401  (VALID_FORMATS is the public name)
 from .models import vad_model_path
 
-VALID_FORMATS = ("txt", "sentences", "srt", "vtt", "json")
+VALID_FORMATS = FORMATS
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,7 +35,12 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python-whisper",
         description="Transcribe video/audio locally with sherpa-onnx (CPU or CUDA).",
     )
-    parser.add_argument("inputs", nargs="*", type=Path, help="media files to transcribe")
+    parser.add_argument("inputs", nargs="*", type=Path, help="media files or directories")
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="skip files whose requested outputs already exist (resume a long queue)",
+    )
     parser.add_argument(
         "-m",
         "--model",
@@ -106,27 +112,6 @@ def parse_formats(raw: str) -> list[str]:
     return wanted
 
 
-def write_outputs(
-    result, outdir: Path, formats: list[str], max_chars: int, max_cue: float
-) -> list[Path]:
-    outdir.mkdir(parents=True, exist_ok=True)
-    stem = Path(result.media.path).stem
-    writers = {
-        "txt": (result.to_txt(), f"{stem}.txt"),
-        "sentences": (result.prose, f"{stem}_transcript_sentences.txt"),
-        "srt": (result.to_srt(max_chars=max_chars, max_duration=max_cue), f"{stem}.srt"),
-        "vtt": (result.to_vtt(max_chars=max_chars, max_duration=max_cue), f"{stem}.vtt"),
-        "json": (result.to_json(), f"{stem}.json"),
-    }
-    written = []
-    for fmt in formats:
-        payload, name = writers[fmt]
-        target = outdir / name
-        target.write_text(payload, encoding="utf-8")
-        written.append(target)
-    return written
-
-
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -138,6 +123,20 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     formats = parse_formats(args.formats)
+
+    files, problems = expand_inputs(args.inputs)
+    for problem in problems:
+        print(f"error: {problem}", file=sys.stderr)
+    if not files:
+        if not problems:
+            print("Nothing to do: no media files matched.", file=sys.stderr)
+        return 1 if problems else 2
+    if args.outdir and len({path.stem for path in files}) < len(files):
+        print(
+            f"warning: {len(files)} inputs share {len({path.stem for path in files})} "
+            f"distinct names, so -o {args.outdir} will overwrite earlier transcripts",
+            file=sys.stderr,
+        )
 
     try:
         spec = get_model(args.model) if args.model else default_model()
@@ -159,7 +158,6 @@ def main(argv: list[str] | None = None) -> int:
         else VadOptions(model_path=vad_model_path(), max_speech_duration=args.max_segment)
     )
 
-    exit_code = 0
     try:
         transcriber = Transcriber(spec, device=args.device, num_threads=threads)
     except ModelLoadError as exc:
@@ -172,7 +170,11 @@ def main(argv: list[str] | None = None) -> int:
     throttle = {"percent": -10, "at": 0.0}
 
     def on_progress(fraction: float, message: str) -> None:
-        """Redraw one progress line, at most every 5% or 1.5 seconds."""
+        """Redraw one progress line, at most every 5% or 1.5 seconds.
+
+        The fraction covers the whole queue, so the line keeps climbing across
+        files instead of restarting at zero for every one of them.
+        """
         if args.quiet:
             return
         percent = int(fraction * 100)
@@ -182,50 +184,66 @@ def main(argv: list[str] | None = None) -> int:
         throttle["percent"], throttle["at"] = percent, now
         print(f"\r  {fraction * 100:5.1f}%  {message:<56}", end="", file=sys.stderr)
 
-    for path in args.inputs:
-        if not path.is_file():
-            print(f"error: no such file: {path}", file=sys.stderr)
-            exit_code = 1
-            continue
+    def on_start(
+        item: BatchItem,
+        index: int,
+        total: int,
+    ) -> None:
+        """Announce a file before it is decoded, so long queues stay legible."""
+        if args.quiet:
+            return
+        prefix = f"[{index}/{total}] " if total > 1 else ""
         try:
-            info = probe(path)
-            if not args.quiet:
-                print(
-                    f"{path.name}: {info.duration_label}, "
-                    f"{len(info.audio_streams)} audio track(s), {info.stream().label}",
-                    file=sys.stderr,
-                )
-            result = transcribe_file(
-                path,
-                transcriber,
-                vad=vad,
-                stream_index=args.stream,
-                on_progress=on_progress,
-            )
-        except (AudioExtractionError, ModelLoadError) as exc:
-            print(f"\nerror: {path.name}: {exc}", file=sys.stderr)
-            exit_code = 1
-            continue
+            info = probe(item.path)
+        except AudioExtractionError as exc:
+            print(f"{prefix}{item.name}: unreadable ({exc})", file=sys.stderr)
+            return
+        print(
+            f"{prefix}{item.name}: {info.duration_label}, "
+            f"{len(info.audio_streams)} audio track(s), {info.stream().label}",
+            file=sys.stderr,
+        )
 
+    def on_item(item: BatchItem) -> None:
         if not args.quiet:
             print(file=sys.stderr)
-
-        outdir = args.outdir or path.parent
-        written = write_outputs(result, outdir, formats, args.max_chars, args.max_cue_seconds)
-
+        if item.status == "failed":
+            print(f"{item.name}: error: {item.error}", file=sys.stderr)
+            return
+        if item.status == "skipped":
+            print(f"{item.name}: skipped, outputs already on disk")
+            return
+        result = item.result
         print(
-            f"{path.name}: {result.segment_count} segments, {result.word_count} words, "
+            f"{item.name}: {result.segment_count} segments, {result.word_count} words, "
             f"{result.audio_seconds:.1f}s audio in {result.wall_seconds:.1f}s "
             f"(RTF {result.rtf:.2f})"
         )
-        for target in written:
+        for target in item.outputs:
             print(f"  wrote {target}")
         if not args.quiet and result.segments:
             preview = result.to_txt()
             snippet = preview[:300] + ("…" if len(preview) > 300 else "")
             print(f"  text: {snippet}")
 
-    return exit_code
+    outcome = run_batch(
+        files,
+        transcriber,
+        vad=vad,
+        outdir=args.outdir,
+        formats=formats,
+        skip_existing=args.skip_existing,
+        stream_index=args.stream,
+        max_chars=args.max_chars,
+        max_cue=args.max_cue_seconds,
+        on_progress=on_progress,
+        on_start=on_start,
+        on_item=on_item,
+    )
+
+    if len(files) > 1 or outcome.skipped:
+        print(outcome.summary())
+    return 1 if outcome.failed else 0
 
 
 if __name__ == "__main__":

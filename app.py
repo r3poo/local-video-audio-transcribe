@@ -14,14 +14,18 @@ import streamlit as st
 
 from whisper_pipeline import (
     AudioExtractionError,
+    BatchOutcome,
     MediaInfo,
     ModelLoadError,
     Transcriber,
     TranscriptionResult,
     VadOptions,
     available_providers,
+    bundle_zip,
+    expand_inputs,
     models,
     probe,
+    run_batch,
     transcribe_file,
 )
 from whisper_pipeline.models import supports_gpu
@@ -191,38 +195,44 @@ def build_sidebar() -> dict:
 # --------------------------------------------------------------------------- #
 # Input
 # --------------------------------------------------------------------------- #
-def pick_media() -> Path | None:
-    """Resolve the file to transcribe from an upload or a server-side path."""
-    upload_tab, path_tab = st.tabs(["Upload file", "Local path"])
+def pick_media() -> list[Path]:
+    """Resolve the files to transcribe from uploads or server-side paths."""
+    upload_tab, path_tab = st.tabs(["Upload files", "Local paths"])
 
     with upload_tab:
-        uploaded = st.file_uploader(
-            "Drop a video or audio file",
+        uploads = st.file_uploader(
+            "Drop video or audio files",
             type=SUPPORTED_TYPES,
-            help="Any container PyAV can decode: mp4, mkv, webm, m4a, mp3, wav…",
+            accept_multiple_files=True,
+            help="Any container PyAV can decode: mp4, mkv, webm, m4a, mp3, wav… "
+            "Two or more files queue up as one batch.",
         )
     with path_tab:
         example = sample_media()
-        typed = st.text_input(
-            "Path on this machine",
+        typed = st.text_area(
+            "Paths on this machine",
             value=str(example) if example else "",
-            placeholder="/path/to/recording.mp4",
+            height=132,
+            placeholder="/path/to/recording.mp4\n/path/to/a/folder/of/clips",
         )
+        note = "One path per line. A directory is expanded recursively to media files."
         if example is not None:
-            st.caption(
-                f"Pre-filled with a sample clip found in the workspace `{example.name}` — "
+            note += (
+                f" Pre-filled with the sample clip found in the workspace `{example.name}` — "
                 "clear the field to start from an upload instead."
             )
+        st.caption(note)
 
-    if uploaded is not None:
-        return save_upload(uploaded)
-    if typed.strip():
-        candidate = Path(typed.strip()).expanduser()
-        if not candidate.is_file():
-            st.error(f"No such file: {candidate}")
-            return None
-        return candidate
-    return None
+    if uploads:
+        return [save_upload(upload) for upload in uploads]
+
+    raw = [line.strip() for line in typed.splitlines() if line.strip()]
+    if not raw:
+        return []
+    paths, problems = expand_inputs(raw)
+    for problem in problems:
+        st.error(problem)
+    return paths
 
 
 def show_media_summary(path: Path) -> MediaInfo | None:
@@ -343,21 +353,169 @@ def show_results(result: TranscriptionResult, max_chars: int, max_cue_seconds: f
 
 
 # --------------------------------------------------------------------------- #
+# Batch
+# --------------------------------------------------------------------------- #
+def render_queue(paths: list[Path]) -> None:
+    """Show what is queued, flagging anything PyAV cannot open before the run."""
+    rows = []
+    for path in paths:
+        entry = {"File": path.name, "Folder": str(path.parent), "Duration": "?"}
+        try:
+            info = probe(path)
+        except AudioExtractionError as exc:
+            entry["Duration"] = f"unreadable: {exc}"
+        else:
+            entry["Duration"] = info.duration_label
+            entry["Audio tracks"] = len(info.audio_streams)
+            entry["Size"] = human_size(info.size_bytes)
+        rows.append(entry)
+    st.dataframe(rows, hide_index=True)
+
+
+def run_batch_ui(paths: list[Path], settings: dict) -> BatchOutcome | None:
+    """Transcribe the queue with one progress bar; ``None`` if the model failed."""
+    bar = st.progress(0.0, text="Loading model…")
+    live = st.empty()
+    try:
+        with st.spinner("Loading model into memory…"):
+            transcriber = load_transcriber(
+                settings["model_key"], settings["device"], settings["threads"]
+            )
+    except ModelLoadError as exc:
+        bar.empty()
+        st.error(str(exc))
+        return None
+    if transcriber.fallback_note:
+        st.warning(transcriber.fallback_note)
+
+    def on_progress(fraction: float, message: str) -> None:
+        bar.progress(min(1.0, fraction), text=message)
+
+    def on_start(item, index: int, total: int) -> None:
+        live.caption(f"File {index} of {total} · **{item.name}**")
+
+    outcome = run_batch(
+        paths,
+        transcriber,
+        vad=settings["vad"],
+        formats=("txt", "sentences", "srt", "vtt", "json"),
+        max_chars=settings["max_chars"],
+        max_cue=settings["max_cue_seconds"],
+        on_progress=on_progress,
+        on_start=on_start,
+    )
+    bar.progress(1.0, text="Done")
+    live.empty()
+    return outcome
+
+
+def render_batch(outcome: BatchOutcome, settings: dict) -> None:
+    """Batch totals, a per-file table, one zip, and a drill-down into any file."""
+    st.divider()
+    metrics = st.columns(5)
+    metrics[0].metric("Files", f"{len(outcome.ok)} of {len(outcome.items)}")
+    metrics[1].metric("Audio", f"{outcome.audio_seconds / 60:.1f} min")
+    metrics[2].metric("Elapsed", f"{outcome.wall_seconds:.0f} s")
+    metrics[3].metric(
+        "Real-time factor",
+        f"{outcome.rtf:.2f}×",
+        help="Seconds of compute per second of audio across the whole batch.",
+    )
+    metrics[4].metric("Words", f"{outcome.word_count:,}")
+
+    for problem in outcome.problems:
+        st.warning(problem)
+    if outcome.failed:
+        st.error(
+            f"{len(outcome.failed)} file(s) failed. The rest of the queue was transcribed; "
+            "see the table for the reason."
+        )
+
+    st.dataframe(
+        [
+            {
+                "File": item.name,
+                "Status": item.status,
+                "Segments": item.result.segment_count if item.result else None,
+                "Words": item.result.word_count if item.result else None,
+                "Duration": item.result.media.duration_label if item.result else None,
+                "RTF": f"{item.result.rtf:.2f}×" if item.result else None,
+                "Detail": item.label,
+            }
+            for item in outcome.items
+        ],
+        hide_index=True,
+    )
+
+    if not outcome.ok:
+        return
+
+    st.download_button(
+        "⬇ All transcripts (.zip)",
+        data=bundle_zip(
+            [item.result for item in outcome.ok],
+            ("txt", "sentences", "srt", "vtt", "json"),
+            max_chars=settings["max_chars"],
+            max_cue=settings["max_cue_seconds"],
+        ),
+        file_name=f"transcripts-{len(outcome.ok)}-files.zip",
+        mime="application/zip",
+    )
+
+    done = outcome.ok
+    choice = st.selectbox(
+        "Inspect one transcript",
+        options=list(range(len(done))),
+        format_func=lambda index: done[index].name,
+        help="The same tabs and downloads as a single-file run, per file.",
+    )
+    show_results(done[choice].result, settings["max_chars"], settings["max_cue_seconds"])
+
+
+def show_batch(paths: list[Path], settings: dict) -> None:
+    """Queue several files, then render the outcome that matches this queue."""
+    st.subheader(f"Batch of {len(paths)} files")
+    render_queue(paths)
+    st.caption(
+        "Files run one after another with the same model and VAD settings, each using its "
+        "container's default audio track. A failed file does not stop the queue."
+    )
+
+    stored = st.session_state.get("batch")
+    if st.button(f"Transcribe {len(paths)} files", type="primary"):
+        outcome = run_batch_ui(paths, settings)
+        if outcome is not None:
+            st.session_state["batch"] = outcome
+            st.session_state.pop("result", None)
+            stored = outcome
+
+    if isinstance(stored, BatchOutcome) and [str(item.path) for item in stored.items] == [
+        str(path) for path in paths
+    ]:
+        render_batch(stored, settings)
+
+
+# --------------------------------------------------------------------------- #
 # Main
 # --------------------------------------------------------------------------- #
 def main() -> None:
     settings = build_sidebar()
     st.title("Transcribe video and audio locally")
 
-    path = pick_media()
-    if path is None:
+    paths = pick_media()
+    if not paths:
         st.info(
-            "Pick a file to begin. Everything runs on this machine — audio is decoded "
-            "by PyAV (bundled FFmpeg libraries, no binary to install) and recognised "
-            "by sherpa-onnx."
+            "Pick one or more files to begin. Everything runs on this machine — audio is "
+            "decoded by PyAV (bundled FFmpeg libraries, no binary to install) and "
+            "recognised by sherpa-onnx."
         )
         return
 
+    if len(paths) > 1:
+        show_batch(paths, settings)
+        return
+
+    path = paths[0]
     info = show_media_summary(path)
     if info is None:
         return

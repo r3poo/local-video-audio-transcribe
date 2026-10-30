@@ -23,6 +23,9 @@ video/audio file ─▶ PyAV demux ─▶ 16 kHz mono float32 ─▶ Silero VAD 
   has no CUDA provider, the app says so and falls back to CPU instead of crashing.
 - **Multiple audio tracks.** Picks the container's default track; the UI lets you
   switch when a film carries commentary and 5.1 mixes.
+- **Batch processing.** Several files in the UI, or a folder on the command line: one
+  model load, sequential decoding, per-file status, a resumable queue
+  (`--skip-existing`) and a single zip of every transcript.
 - **Streaming decode.** Audio is processed in blocks, so a 2-hour film never sits
   in RAM as one giant array.
 
@@ -109,11 +112,16 @@ Whisper.
 ```
 
 - Pick a model, device and thread count in the sidebar.
-- Upload a file, or paste a path on the server (`Local path` tab) to avoid copying
-  multi-GB files through the browser.
+- Upload one file or several (the uploader takes a multi-selection), or drop a list of
+  paths into the `Local paths` box — one per line, directories welcome. More than one
+  file switches the page into batch mode: a queue table, one progress bar for the whole
+  queue, then batch totals, a per-file status table and a **zip** with every transcript.
 - Review the transcript, the segment table, the generated subtitles and the JSON
   payload; download any of them. The **Sentences .txt** button writes
   `NAME_transcript_sentences.txt`: the VAD cuts merged back into whole sentences.
+- In a batch, `Inspect one transcript` re-opens that single-file view — same tabs, same
+  downloads — for any file that succeeded. A failed file is reported in the table and
+  never stops the queue.
 
 The model is cached per (model, device, threads) with `max_entries=1`, so switching
 models frees the previous one instead of holding every model in RAM.
@@ -124,13 +132,26 @@ models frees the previous one instead of holding every model in RAM.
 # one file, subtitles + text next to the source
 python-whisper lecture.mp4                       # or: uv run python-whisper lecture.mp4
 
-# batch, all formats, explicit output dir and model
+# a directory is expanded recursively to media files
+python-whisper talks/ -f txt,sentences -o transcripts
+
+# explicit list, all formats, explicit model
 python-whisper talks/*.mkv -m parakeet-tdt-0.6b-v2 \
     -f txt,sentences,srt,vtt,json -o transcripts --threads 8
+
+# resume a queue: skip anything whose requested outputs already exist
+python-whisper talks/ --skip-existing
 
 # a specific audio track, no VAD
 python-whisper film.mkv --stream 2 --no-vad
 ```
+
+Several inputs run as a **batch**: one model load, files decoded one after another, and
+one summary line at the end (`3 ok · 0 skipped · 1 failed · 12.4 min audio in 95 s
+(RTF 0.13)`). A corrupt file is reported and skipped — it never ends the queue — and the
+exit code is `1` when anything failed. Batch work is sequential on purpose: the model is
+up to 764 MB resident and sherpa-onnx already saturates the intra-op threads, so a second
+worker would double memory to buy throughput the CPU cannot use.
 
 | Flag | Purpose |
 | --- | --- |
@@ -139,6 +160,7 @@ python-whisper film.mkv --stream 2 --no-vad
 | `-t/--threads` | CPU threads, `0` = all cores |
 | `-f/--formats` | any of `txt,sentences,srt,vtt,json` |
 | `-o/--outdir` | output directory (default: beside each input) |
+| `--skip-existing` | skip files whose requested outputs are already on disk |
 | `--stream` | audio track index to decode |
 | `--no-vad` | blind 30 s windows instead of silence-aware segmentation |
 | `--max-segment` | hard ceiling per decoded chunk (default 20 s) |
@@ -301,7 +323,9 @@ python-whisper/
 ├── cli.py                     shim → whisper_pipeline/cli.py
 ├── whisper_pipeline/          the library + CLI
 │   ├── audio.py               PyAV probe + 16 kHz decode
+│   ├── batch.py               queue: expand inputs, transcribe, collect outcomes
 │   ├── engine.py              sherpa-onnx transcriber, VAD, chunker
+│   ├── export.py              format naming, file writing, zip bundle
 │   ├── models.py              model catalogue, download metadata, provider probe
 │   ├── prose.py               sentence rebuilding (VAD cuts -> prose)
 │   ├── subtitles.py           cue building, srt/vtt/txt/json

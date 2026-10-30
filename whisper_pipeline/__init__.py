@@ -15,7 +15,15 @@ from .audio import (
     iter_blocks,
     probe,
 )
+from .batch import (
+    MEDIA_EXTENSIONS,
+    BatchItem,
+    BatchOutcome,
+    expand_inputs,
+    run_batch,
+)
 from .engine import ModelLoadError, Transcriber, VadOptions
+from .export import DEFAULT_FORMATS, FORMATS, bundle_zip, write_outputs
 from .models import (
     CATALOG,
     ModelSpec,
@@ -34,7 +42,12 @@ from .types import Segment, Word
 __all__ = [
     "AudioExtractionError",
     "AudioStreamInfo",
+    "BatchItem",
+    "BatchOutcome",
     "CATALOG",
+    "DEFAULT_FORMATS",
+    "FORMATS",
+    "MEDIA_EXTENSIONS",
     "MediaInfo",
     "ModelLoadError",
     "ModelSpec",
@@ -47,12 +60,15 @@ __all__ = [
     "available_models",
     "available_providers",
     "build_sentences",
+    "bundle_zip",
     "decode_audio",
     "default_model",
+    "expand_inputs",
     "get_model",
     "iter_blocks",
     "model_root",
     "probe",
+    "run_batch",
     "supports_gpu",
     "to_json",
     "to_prose",
@@ -60,6 +76,7 @@ __all__ = [
     "to_txt",
     "to_vtt",
     "transcribe_file",
+    "write_outputs",
 ]
 
 __version__ = "1.0.0"
