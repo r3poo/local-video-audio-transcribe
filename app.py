@@ -23,6 +23,7 @@ from whisper_pipeline import (
     available_providers,
     bundle_zip,
     expand_inputs,
+    fetch,
     models,
     parse_path_text,
     probe,
@@ -99,13 +100,63 @@ def human_size(num_bytes: int) -> str:
 # --------------------------------------------------------------------------- #
 # Sidebar
 # --------------------------------------------------------------------------- #
+def _first_run_download() -> None:
+    """Offer the model downloads in-app.
+
+    The portable bundle ships with an empty ``models/``, so a fresh unzip must be
+    able to fetch a model without touching a terminal — otherwise "unzip and run"
+    is a dead end pointing at a script the bundle does not contain.
+    """
+    st.sidebar.warning("No speech model on disk yet.")
+    st.sidebar.caption(
+        "Download one once (~600 MB), it lands in `models/` next to the app. "
+        "Needs internet; after that everything runs offline."
+    )
+
+    def total_mb(model_key: str) -> float:
+        assets = (*fetch.MODEL_DOWNLOADS[model_key], "vad")
+        return sum(fetch.ASSET_SIZES.get(asset, 0.0) for asset in assets)
+
+    labels = {
+        key: f"{models.get_model(key).label} — ~{total_mb(key):.0f} MB"
+        for key in fetch.MODEL_DOWNLOADS
+    }
+    choice = st.sidebar.radio(
+        "Model to download",
+        options=list(labels),
+        format_func=lambda key: labels[key],
+        help="Parakeet is the most accurate English model; Whisper base.en is the "
+        "smaller baseline. Either way the Silero VAD model comes along.",
+    )
+    if not st.sidebar.button("Download model", type="primary", use_container_width=True):
+        return
+
+    bar = st.sidebar.progress(0.0, text="starting…")
+
+    def advance(fraction: float, message: str) -> None:
+        bar.progress(min(fraction, 1.0), text=message)
+
+    try:
+        fetch.download(fetch.pending_for(choice), progress=advance)
+    except Exception as exc:  # noqa: BLE001 - show the reason, not a traceback
+        st.sidebar.error(f"Download failed: {exc}")
+        st.sidebar.caption(
+            "Nothing was left half-installed. Server blocking the download? Fetch the "
+            "tarball from github.com/k2-fsa/sherpa-onnx/releases and unpack it into "
+            f"`{fetch.model_dir()}`."
+        )
+    else:
+        st.sidebar.success("Model ready — reloading.")
+        st.rerun()
+
+
 def build_sidebar() -> dict:
     st.sidebar.title("🎙️ Local Transcriber")
     st.sidebar.caption("sherpa-onnx + PyAV · no ffmpeg binary, no cloud calls")
 
     installed = models.available_models()
     if not installed:
-        st.sidebar.error("No models found in `models/` — run `scripts/download_models.py`.")
+        _first_run_download()
         st.stop()
 
     labels = {spec.key: f"{spec.label} — {spec.describe()}" for spec in installed}

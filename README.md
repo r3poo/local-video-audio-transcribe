@@ -70,6 +70,70 @@ the checkout, where `uv run streamlit run app.py` picks up the same environment.
 The downloader writes into `models/` and skips anything already present
 (`--force` re-fetches, `--only vad` fetches a single asset).
 
+## Portable build (no installer)
+
+`packaging/build_bundle.py` assembles a folder that needs no setup at all: an embedded
+CPython with the same wheels `uv sync` installs, the app, launchers, and an empty
+`models/` folder. On Windows, double-click:
+
+```bat
+packaging\build.bat
+```
+
+or run it yourself from any OS with `uv` on PATH:
+
+```bash
+uv run --no-project python packaging/build_bundle.py
+# → dist/whisper-portable-windows-x86_64/  (~730 MB)
+# → dist/whisper-portable-windows-x86_64.zip  (~230 MB)
+```
+
+Ship the zip. The recipient unzips it anywhere writable and double-clicks
+`Start.bat` — no Python, no `uv`, no admin rights, no PATH edits.
+
+| File in the bundle | What it does |
+| --- | --- |
+| `Start.bat` / `start.sh` | starts Streamlit and opens the browser |
+| `Transcribe.bat` / `transcribe.sh` | the CLI: `Transcribe.bat "C:\clips" -f txt,sentences` |
+| `runtime/` | embedded CPython 3.12 with av, numpy, pyarrow, sherpa-onnx, streamlit — don't edit or move |
+| `models/` | empty on first run; the app offers a one-time download, then works offline |
+| `README-FIRST.txt` | the same instructions, for whoever opens the zip |
+
+Model weights are **not** included by default (they are 1.1 GB and licensed
+separately). To ship them inside the zip:
+
+```bash
+uv run --no-project python packaging/build_bundle.py --models all        # +1.07 GB
+uv run --no-project python packaging/build_bundle.py --models parakeet-tdt-0.6b-v2
+```
+
+Weights are copied from your local `models/` folder, so run
+`python scripts/download_models.py` first. Other flags: `--out DIR`, `--name NAME`,
+`--python 3.12`, `--no-zip`, `--keep` (rebuild into an existing folder without
+re-downloading the interpreter and wheels — used for iterating on the app).
+
+**Why a folder and not one `.exe`.** A PyInstaller `--onefile` build has to unpack
+~700 MB into a temp directory on every launch, and Streamlit's static assets plus
+PyAV's FFmpeg DLLs need hand-maintained hidden-import lists that break on every
+upgrade. An embedded interpreter plus ordinary wheels has neither problem, stays
+debuggable (`runtime\python.exe -m pip install ...` works), and is what the
+"portable app" tools do under the hood anyway.
+
+### Caveats for the Windows zip
+
+- **SmartScreen**: the launcher is not code-signed, so the first run may say
+  *Windows protected your PC* → **More info** → **Run anyway**. Sign the `.bat`/
+  `.exe` or publish a SHA-256 next to the zip to reduce the friction.
+- **Antivirus** sometimes quarantines freshly built unsigned launchers. The bundle
+  contains only CPython, Streamlit, PyAV and onnxruntime; submit a false-positive
+  report if a customer hits it.
+- **CPU only**: the bundle installs the CPU wheels and has no CUDA runtime. GPU use
+  needs the CUDA wheel plus an NVIDIA driver — see *GPU setup*.
+- Unzip to a **plain, writable, locally synced folder** (`C:\Tools\…`, Desktop, USB).
+  OneDrive/Dropbox-backed folders can lock files mid-run, and paths over ~200
+  characters break the model downloader.
+- Upgrading = unzip the new build elsewhere and copy your `models/` folder across.
+
 ## Models
 
 | Key | Files | Quality | RTF (CPU, 2 threads) |
@@ -331,11 +395,15 @@ python-whisper/
 │   ├── batch.py               queue: expand inputs, transcribe, collect outcomes
 │   ├── engine.py              sherpa-onnx transcriber, VAD, chunker
 │   ├── export.py              format naming, file writing, zip bundle
+│   ├── fetch.py               model downloads: progress, size check, safe extract
 │   ├── models.py              model catalogue, download metadata, provider probe
 │   ├── prose.py               sentence rebuilding (VAD cuts -> prose)
 │   ├── subtitles.py           cue building, srt/vtt/txt/json
 │   └── types.py               MediaInfo, Segment, Word
 ├── scripts/download_models.py model fetcher (stdlib only)
+├── packaging/
+│   ├── build_bundle.py        portable zip builder (embedded CPython + wheels)
+│   └── build.bat              one-click wrapper for Windows
 ├── models/                    downloaded weights (git-ignored)
 ├── out/                       sample output (git-ignored)
 ├── requirements.txt           CPU install (plain pip)

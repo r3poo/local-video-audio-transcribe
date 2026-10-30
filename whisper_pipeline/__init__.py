@@ -7,6 +7,7 @@ Public surface:
     )
 """
 
+from . import fetch
 from .audio import (
     AudioExtractionError,
     AudioStreamInfo,
@@ -67,6 +68,7 @@ __all__ = [
     "decode_audio",
     "default_model",
     "expand_inputs",
+    "fetch",
     "get_model",
     "iter_blocks",
     "model_root",
