@@ -19,6 +19,7 @@ from . import audio as audio_io
 from .audio import AudioStreamInfo, MediaInfo
 from .engine import FixedWindowSegmenter, Transcriber, VadOptions, VadSegmenter
 from .models import ModelSpec
+from .prose import Sentence, build_sentences, to_prose
 from .subtitles import to_json, to_srt, to_txt, to_vtt
 from .types import Segment
 
@@ -53,6 +54,16 @@ class TranscriptionResult:
     @property
     def word_count(self) -> int:
         return sum(segment.word_count for segment in self.segments)
+
+    @property
+    def sentences(self) -> tuple[Sentence, ...]:
+        """Utterances regrouped into sentences that ignore VAD boundaries."""
+        return tuple(build_sentences(self.segments))
+
+    @property
+    def prose(self) -> str:
+        """Sentence-level transcript: the VAD cuts merged back into prose."""
+        return to_prose(self.segments)
 
     @property
     def rtf(self) -> float:

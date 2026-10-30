@@ -153,7 +153,7 @@ def build_sidebar() -> dict:
             0.05,
             help="Higher is stricter: fewer false positives on noise.",
         )
-        min_speech = st.slider("Min speech (s)", 0.1, 2.0, 0.25, 0.05)
+        min_speech = st.slider("Min speech (s)", 0.1, 2.0, 0.1, 0.05)
         min_silence = st.slider("Min silence (s)", 0.1, 2.0, 0.5, 0.05)
         max_speech = st.slider(
             "Max segment (s)", 5.0, 30.0, 20.0, 1.0, help="Hard ceiling per decoded chunk."
@@ -291,6 +291,7 @@ def show_results(result: TranscriptionResult, max_chars: int, max_cue_seconds: f
     srt = result.to_srt(max_chars=max_chars, max_duration=max_cue_seconds)
     vtt = result.to_vtt(max_chars=max_chars, max_duration=max_cue_seconds)
     txt = result.to_txt()
+    sentences_txt = result.prose
     payload = result.to_json()
 
     tab_text, tab_segments, tab_srt, tab_json = st.tabs(
@@ -319,15 +320,21 @@ def show_results(result: TranscriptionResult, max_chars: int, max_cue_seconds: f
         st.json(json.loads(payload))
 
     stem = Path(result.media.path).stem
-    downloads = st.columns(4)
+    downloads = st.columns(5)
     downloads[0].download_button(
         "⬇ Transcript .txt", txt, file_name=f"{stem}.txt", mime="text/plain"
     )
     downloads[1].download_button(
+        "⬇ Sentences .txt",
+        sentences_txt,
+        file_name=f"{stem}_transcript_sentences.txt",
+        mime="text/plain",
+    )
+    downloads[2].download_button(
         "⬇ Subtitles .srt", srt, file_name=f"{stem}.srt", mime="text/plain"
     )
-    downloads[2].download_button("⬇ Subtitles .vtt", vtt, file_name=f"{stem}.vtt", mime="text/vtt")
-    downloads[3].download_button(
+    downloads[3].download_button("⬇ Subtitles .vtt", vtt, file_name=f"{stem}.vtt", mime="text/vtt")
+    downloads[4].download_button(
         "⬇ Transcript .json", payload, file_name=f"{stem}.json", mime="application/json"
     )
 

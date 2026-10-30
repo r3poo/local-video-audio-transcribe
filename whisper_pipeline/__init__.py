@@ -27,6 +27,7 @@ from .models import (
     supports_gpu,
 )
 from .pipeline import TranscriptionResult, transcribe_file
+from .prose import Sentence, build_sentences, to_prose
 from .subtitles import to_json, to_srt, to_txt, to_vtt
 from .types import Segment, Word
 
@@ -38,12 +39,14 @@ __all__ = [
     "ModelLoadError",
     "ModelSpec",
     "Segment",
+    "Sentence",
     "Transcriber",
     "TranscriptionResult",
     "VadOptions",
     "Word",
     "available_models",
     "available_providers",
+    "build_sentences",
     "decode_audio",
     "default_model",
     "get_model",
@@ -52,6 +55,7 @@ __all__ = [
     "probe",
     "supports_gpu",
     "to_json",
+    "to_prose",
     "to_srt",
     "to_txt",
     "to_vtt",

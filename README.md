@@ -6,7 +6,7 @@ recognised by **sherpa-onnx** (ONNX Runtime). Runs on CPU out of the box; the sa
 code drives a CUDA GPU when one is available.
 
 ```
-video/audio file ─▶ PyAV demux ─▶ 16 kHz mono float32 ─▶ Silero VAD ─▶ sherpa-onnx ─▶ segments ─▶ txt / srt / vtt / json
+video/audio file ─▶ PyAV demux ─▶ 16 kHz mono float32 ─▶ Silero VAD ─▶ sherpa-onnx ─▶ segments ─▶ txt / sentences / srt / vtt / json
 ```
 
 ## Features
@@ -112,7 +112,8 @@ Whisper.
 - Upload a file, or paste a path on the server (`Local path` tab) to avoid copying
   multi-GB files through the browser.
 - Review the transcript, the segment table, the generated subtitles and the JSON
-  payload; download any of them.
+  payload; download any of them. The **Sentences .txt** button writes
+  `NAME_transcript_sentences.txt`: the VAD cuts merged back into whole sentences.
 
 The model is cached per (model, device, threads) with `max_entries=1`, so switching
 models frees the previous one instead of holding every model in RAM.
@@ -125,7 +126,7 @@ python-whisper lecture.mp4                       # or: uv run python-whisper lec
 
 # batch, all formats, explicit output dir and model
 python-whisper talks/*.mkv -m parakeet-tdt-0.6b-v2 \
-    -f txt,srt,vtt,json -o transcripts --threads 8
+    -f txt,sentences,srt,vtt,json -o transcripts --threads 8
 
 # a specific audio track, no VAD
 python-whisper film.mkv --stream 2 --no-vad
@@ -136,7 +137,7 @@ python-whisper film.mkv --stream 2 --no-vad
 | `-m/--model` | model key (default: best installed) |
 | `-d/--device` | `cpu` (default) or `cuda` |
 | `-t/--threads` | CPU threads, `0` = all cores |
-| `-f/--formats` | any of `txt,srt,vtt,json` |
+| `-f/--formats` | any of `txt,sentences,srt,vtt,json` |
 | `-o/--outdir` | output directory (default: beside each input) |
 | `--stream` | audio track index to decode |
 | `--no-vad` | blind 30 s windows instead of silence-aware segmentation |
@@ -216,6 +217,7 @@ Notes:
 | Format | Shape |
 | --- | --- |
 | `txt` | Plain transcript, one line per utterance |
+| `sentences` | Prose: VAD cuts merged back into whole sentences, `NAME_transcript_sentences.txt` |
 | `srt` | Numbered cues, `HH:MM:SS,mmm`, sentence-aware splitting |
 | `vtt` | Same cues, `HH:MM:SS.mmm`, `WEBVTT` header |
 | `json` | Full fidelity: media metadata, provider, timings, segments and word timestamps |
@@ -223,6 +225,13 @@ Notes:
 Cue splitting works on word timestamps when the model provides them: cues break at
 sentence ends first, then at the character budget (default 84), never splitting a
 word. Models without word timings fall back to proportional timing.
+
+The `sentences` export is the prose counterpart of `txt`: segments are discarded as
+timeline artefacts and the timed words are regrouped into sentences, so a sentence
+the VAD cut in half comes out whole. A sentence ends at terminal punctuation, at a
+pause longer than 1.2 s, or — for models that emit no punctuation — at 45 words /
+25 s. Parakeet transcribes in a lower case alphabet, so sentence-initial capitals
+and first-person `I` are restored; pauses over 2 s become paragraph breaks.
 
 ## The pipeline
 
@@ -245,6 +254,9 @@ multiple threads and a single recogniser cannot be used concurrently.
   it when quiet speech is being dropped.
 - **Min silence** (default 0.5 s): raise it to merge short pauses into one cue,
   lower it to split faster dialogue.
+- **Min speech** (default 0.1 s): raise it to drop clicks, breaths and other
+  sub-100 ms blips before they reach the decoder, lower it to keep clipped
+  one-word interjections.
 - **Max segment** (default 20 s): hard ceiling per decode call.
 - **Threads**: sherpa-onnx scales nearly linearly until physical cores are
   exhausted; hyperthreads add little.
@@ -291,6 +303,7 @@ python-whisper/
 │   ├── audio.py               PyAV probe + 16 kHz decode
 │   ├── engine.py              sherpa-onnx transcriber, VAD, chunker
 │   ├── models.py              model catalogue, download metadata, provider probe
+│   ├── prose.py               sentence rebuilding (VAD cuts -> prose)
 │   ├── subtitles.py           cue building, srt/vtt/txt/json
 │   └── types.py               MediaInfo, Segment, Word
 ├── scripts/download_models.py model fetcher (stdlib only)

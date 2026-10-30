@@ -26,7 +26,7 @@ from . import (
 )
 from .models import vad_model_path
 
-VALID_FORMATS = ("txt", "srt", "vtt", "json")
+VALID_FORMATS = ("txt", "sentences", "srt", "vtt", "json")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -112,15 +112,16 @@ def write_outputs(
     outdir.mkdir(parents=True, exist_ok=True)
     stem = Path(result.media.path).stem
     writers = {
-        "txt": (result.to_txt(), "txt"),
-        "srt": (result.to_srt(max_chars=max_chars, max_duration=max_cue), "srt"),
-        "vtt": (result.to_vtt(max_chars=max_chars, max_duration=max_cue), "vtt"),
-        "json": (result.to_json(), "json"),
+        "txt": (result.to_txt(), f"{stem}.txt"),
+        "sentences": (result.prose, f"{stem}_transcript_sentences.txt"),
+        "srt": (result.to_srt(max_chars=max_chars, max_duration=max_cue), f"{stem}.srt"),
+        "vtt": (result.to_vtt(max_chars=max_chars, max_duration=max_cue), f"{stem}.vtt"),
+        "json": (result.to_json(), f"{stem}.json"),
     }
     written = []
     for fmt in formats:
-        payload, extension = writers[fmt]
-        target = outdir / f"{stem}.{extension}"
+        payload, name = writers[fmt]
+        target = outdir / name
         target.write_text(payload, encoding="utf-8")
         written.append(target)
     return written

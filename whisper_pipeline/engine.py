@@ -55,7 +55,7 @@ class VadOptions:
 
     model_path: Path
     threshold: float = 0.5
-    min_speech_duration: float = 0.25
+    min_speech_duration: float = 0.1
     min_silence_duration: float = 0.5
     max_speech_duration: float = 20.0
 
