@@ -1,0 +1,835 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local Transcriber</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #262b36; --text: #e6e8ee;
+    --muted: #98a0b3; --accent: #4f8cff; --ok: #37b26b; --warn: #d9a13b; --bad: #e05c5c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    padding: 18px 24px; border-bottom: 1px solid var(--line);
+    display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap;
+  }
+  header h1 { font-size: 20px; margin: 0; font-weight: 650; letter-spacing: -.01em; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  main { padding: 24px; max-width: 1180px; margin: 0 auto; display: grid; gap: 20px; }
+  section {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px;
+  }
+  section > h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 0 0 14px; }
+  .grid { display: grid; gap: 14px 20px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+  .grid.wide { grid-template-columns: minmax(290px, 1.5fr) minmax(110px, 0.6fr) minmax(160px, 0.95fr) minmax(215px, 1.15fr); }
+  @media (max-width: 1000px) { .grid.wide { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 560px) { .grid.wide { grid-template-columns: 1fr; } }
+  .hint { display: block; font-size: 11.5px; color: var(--muted); margin-top: 6px; line-height: 1.45; }
+  label.field { display: block; font-size: 13px; color: var(--muted); }
+  label.field > span.val { color: var(--text); font-variant-numeric: tabular-nums; margin-left: 4px; }
+  label.field > select, label.field > input, label.field > textarea {
+    display: block; width: 100%; margin-top: 8px;
+  }
+  label.field > .hint { margin-top: 6px; }
+  select, input[type=text], textarea, button {
+    font: inherit; color: var(--text); background: #10131a;
+    border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px;
+  }
+  textarea { width: 100%; min-height: 84px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  input[type=range] { accent-color: var(--accent); width: 100%; }
+  button { cursor: pointer; }
+  button:hover { border-color: #3a4252; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.primary:disabled { opacity: .5; cursor: not-allowed; }
+  button.danger { border-color: #4a2b2b; color: #f0a3a3; }
+  button.small { padding: 3px 8px; font-size: 12px; }
+  #drop {
+    border: 1.5px dashed #333b4a; border-radius: 10px; padding: 26px; text-align: center;
+    color: var(--muted); transition: border-color .15s, background .15s; cursor: pointer;
+  }
+  #drop.over { border-color: var(--accent); background: #131a2a; }
+  #drop strong { color: var(--text); }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .spacer { flex: 1; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  td.num { font-variant-numeric: tabular-nums; }
+  .pill { border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; font-size: 12px; color: var(--muted); }
+  .pill.ok { color: var(--ok); border-color: #24503a; }
+  .pill.bad { color: var(--bad); border-color: #55272b; }
+  .pill.warn { color: var(--warn); border-color: #4f3d1c; }
+  .pill.running { color: var(--accent); border-color: #24406e; }
+  progress { width: 100%; height: 9px; accent-color: var(--accent); }
+  .msg { font-size: 13px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .banner { border-radius: 8px; padding: 10px 12px; font-size: 13.5px; border: 1px solid; }
+  .banner.error { color: #ffb4b4; background: #241415; border-color: #56262a; }
+  .banner.warn { color: #f0cd8a; background: #241f12; border-color: #55431c; }
+  .banner.ok { color: #a6e9c2; background: #10231a; border-color: #24503a; }
+  pre.transcript {
+    max-height: 340px; overflow: auto; white-space: pre-wrap; margin: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;
+    background: #10131a; border: 1px solid var(--line); border-radius: 8px; padding: 12px;
+  }
+  .links { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 0; }
+  .links a {
+    color: var(--text); text-decoration: none; border: 1px solid var(--line);
+    border-radius: 7px; padding: 6px 10px; font-size: 13px; background: #10131a;
+  }
+  .links a:hover { border-color: var(--accent); }
+  .hidden { display: none !important; }
+  .metrics { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+  .metric .k { font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .metric .v { font-size: 19px; font-variant-numeric: tabular-nums; }
+  .muted { color: var(--muted); }
+  .tiny { font-size: 12px; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover td { background: #1c212b; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎙️ Local Transcriber</h1>
+  <span class="sub">sherpa-onnx + PyAV · nothing leaves this machine</span>
+  <span class="spacer"></span>
+  <span class="pill" id="env-pill">…</span>
+</header>
+
+<main>
+  <div id="alerts"></div>
+
+  <!-- First run: model download -->
+  <section id="download-panel" class="hidden">
+    <h2>Get a speech model</h2>
+    <p class="muted" style="margin-top:0">
+      No model on disk yet. Download once (~483 MB, needs internet); afterwards everything runs offline.
+    </p>
+    <div class="row">
+      <select id="download-model"></select>
+      <button class="primary" id="download-btn">Download model</button>
+      <span class="spacer"></span>
+      <span class="tiny muted" id="download-note"></span>
+    </div>
+    <div class="row" id="download-progress-row" style="margin-top:12px; display:none">
+      <progress id="download-progress" value="0" max="1"></progress>
+      <span class="msg" id="download-progress-msg"></span>
+    </div>
+  </section>
+
+  <!-- Settings -->
+  <section id="settings-section">
+    <h2>Settings</h2>
+    <div class="grid wide">
+      <label class="field">Model
+        <select id="model"></select>
+        <span class="hint" id="model-hint"></span>
+      </label>
+      <label class="field">Compute
+        <select id="device">
+          <option value="cpu">CPU</option>
+        </select>
+      </label>
+      <label class="field">CPU threads <span class="val" id="threads-val">2</span>
+        <input type="range" id="threads" min="1" max="8" step="1" value="2">
+      </label>
+      <label class="field">Voice activity detection
+        <select id="use-vad">
+          <option value="1">on — whole utterances (recommended)</option>
+          <option value="0">off — blind 30 s windows</option>
+        </select>
+      </label>
+    </div>
+
+    <details style="margin-top:16px">
+      <summary class="muted tiny" style="cursor:pointer">VAD tuning</summary>
+      <div class="grid" style="margin-top:12px">
+        <label class="field">Speech threshold <span class="val" id="vad-threshold-val">0.50</span>
+          <input type="range" id="vad-threshold" min="0.1" max="0.9" step="0.05" value="0.5">
+        </label>
+        <label class="field">Min speech (s) <span class="val" id="vad-min-speech-val">0.10</span>
+          <input type="range" id="vad-min-speech" min="0.1" max="2" step="0.05" value="0.1">
+        </label>
+        <label class="field">Min silence (s) <span class="val" id="vad-min-silence-val">0.50</span>
+          <input type="range" id="vad-min-silence" min="0.1" max="2" step="0.05" value="0.5">
+        </label>
+        <label class="field">Max segment (s) <span class="val" id="vad-max-speech-val">20</span>
+          <input type="range" id="vad-max-speech" min="5" max="30" step="1" value="20">
+        </label>
+      </div>
+    </details>
+
+    <details style="margin-top:12px">
+      <summary class="muted tiny" style="cursor:pointer">Subtitle output</summary>
+      <div class="grid" style="margin-top:12px">
+        <label class="field">Max characters per cue <span class="val" id="max-chars-val">84</span>
+          <input type="range" id="max-chars" min="40" max="120" step="4" value="84">
+        </label>
+        <label class="field">Max cue duration (s) <span class="val" id="max-cue-val">6.0</span>
+          <input type="range" id="max-cue" min="2" max="12" step="0.5" value="6">
+        </label>
+      </div>
+    </details>
+
+    <details style="margin-top:12px">
+      <summary class="muted tiny" style="cursor:pointer">Formats</summary>
+      <div class="row" style="margin-top:12px" id="formats"></div>
+    </details>
+  </section>
+
+  <!-- Input -->
+  <section>
+    <h2>Files</h2>
+    <div id="drop" tabindex="0" role="button">
+      <p style="margin:0 0 6px"><strong>Drop video or audio here</strong> — or click to pick files</p>
+      <p class="tiny" style="margin:0">mp4 · mkv · mov · webm · avi · ts · m4a · mp3 · wav · flac · ogg · opus · aac</p>
+    </div>
+    <input type="file" id="file-input" multiple class="hidden">
+    <p class="tiny muted" id="upload-status"></p>
+
+    <div style="margin-top:16px">
+      <label class="field" for="paths">Or paths on this machine (one per line, a folder is expanded)
+        <textarea id="paths" placeholder="/home/me/talks/ep01.mp4&#10;/home/me/talks/&#10;D:\Videos\&quot;My clip.mp4&quot;"></textarea>
+      </label>
+      <div class="row" style="margin-top:8px">
+        <button id="add-paths">Add paths</button>
+        <span class="tiny muted">Quotes are fine — paste a whole multi-selection, spaces and all.</span>
+      </div>
+    </div>
+
+    <div style="margin-top:20px">
+      <div class="row">
+        <h2 style="margin:0">Queue <span class="pill" id="queue-count">0</span></h2>
+        <span class="spacer"></span>
+        <button class="small" id="clear-queue">Clear</button>
+      </div>
+      <table style="margin-top:10px">
+        <thead><tr>
+          <th>File</th><th>Duration</th><th>Tracks</th><th>Size</th><th></th>
+        </tr></thead>
+        <tbody id="queue-body"></tbody>
+      </table>
+      <p class="tiny muted hidden" id="queue-empty">Nothing queued yet.</p>
+      <label class="field hidden" id="track-field" style="max-width:520px; margin-top:12px">
+        Audio track (single-file runs only)
+        <select id="track"></select>
+      </label>
+    </div>
+
+    <div class="row" style="margin-top:18px">
+      <button class="primary" id="run-btn" disabled>Transcribe</button>
+      <button class="danger hidden" id="cancel-btn">Cancel</button>
+      <span class="spacer"></span>
+      <span class="tiny muted" id="run-hint"></span>
+    </div>
+    <div style="margin-top:12px">
+      <progress id="progress" value="0" max="1" class="hidden"></progress>
+      <div class="msg" id="progress-msg" style="margin-top:6px"></div>
+    </div>
+  </section>
+
+  <!-- Results -->
+  <section id="results-section" class="hidden">
+    <h2>Results</h2>
+    <div class="metrics" id="metrics"></div>
+    <div id="result-alerts" style="margin-top:14px"></div>
+    <div class="links" id="bulk-links"></div>
+    <table style="margin-top:16px">
+      <thead><tr>
+        <th>File</th><th>Status</th><th>Duration</th><th>Segments</th><th>Words</th><th>RTF</th>
+      </tr></thead>
+      <tbody id="result-body"></tbody>
+    </table>
+    <div id="detail" style="margin-top:18px"></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+const state = {
+  config: null,
+  queue: [],
+  job: null,
+  poll: null,
+  busy: false,
+};
+
+let detailToken = 0;
+
+const $ = (id) => document.getElementById(id);
+
+/* ----------------------------------------------------------------- helpers */
+function el(tag, opts = {}, children = []) {
+  const node = document.createElement(tag);
+  if (opts.class) node.className = opts.class;
+  if (opts.text != null) node.textContent = opts.text;
+  if (opts.attrs) for (const [k, v] of Object.entries(opts.attrs)) node.setAttribute(k, v);
+  if (opts.on) for (const [k, v] of Object.entries(opts.on)) node.addEventListener(k, v);
+  for (const child of children) if (child) node.appendChild(child);
+  return node;
+}
+
+function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+
+function pill(status) {
+  const map = {
+    ok: "ok", failed: "bad", cancelled: "warn", skipped: "warn", running: "running", queued: "",
+  };
+  return el("span", { class: `pill ${map[status] || ""}`, text: status });
+}
+
+function fmtDuration(seconds) {
+  if (seconds == null || Number.isNaN(seconds)) return "?";
+  const total = Math.round(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+           : `${m}:${String(s).padStart(2, "0")}`;
+}
+
+async function api(path, options = {}) {
+  const opts = { ...options, headers: { ...(options.headers || {}) } };
+  if (opts.method && opts.method !== "GET") {
+    opts.headers["X-Whisper"] = "1";
+    if (opts.json !== undefined) {
+      opts.headers["Content-Type"] = "application/json";
+      opts.body = JSON.stringify(opts.json);
+      delete opts.json;
+    }
+  }
+  const response = await fetch(path, opts);
+  const text = await response.text();
+  let data = {};
+  try { data = text ? JSON.parse(text) : {}; } catch { data = { error: text }; }
+  if (!response.ok) throw new Error(data.error || `${response.status} ${response.statusText}`);
+  return data;
+}
+
+function showAlert(target, kind, message) {
+  target.appendChild(el("div", { class: `banner ${kind}`, text: message, attrs: { style: "margin-bottom:10px" } }));
+}
+
+/* ---------------------------------------------------------------- settings */
+const SLIDERS = [
+  { id: "threads", key: "threads", dp: 0 },
+  { id: "vad-threshold", key: "vad_threshold", dp: 2 },
+  { id: "vad-min-speech", key: "vad_min_speech", dp: 2 },
+  { id: "vad-min-silence", key: "vad_min_silence", dp: 2 },
+  { id: "vad-max-speech", key: "vad_max_speech", dp: 0 },
+  { id: "max-chars", key: "max_chars", dp: 0 },
+  { id: "max-cue", key: "max_cue", dp: 1 },
+];
+
+function readSettings() {
+  const formats = [...document.querySelectorAll("#formats input:checked")].map((n) => n.value);
+  return {
+    model: $("model").value,
+    device: $("device").value,
+    threads: Number($("threads").value),
+    use_vad: $("use-vad").value === "1",
+    vad_threshold: Number($("vad-threshold").value),
+    vad_min_speech: Number($("vad-min-speech").value),
+    vad_min_silence: Number($("vad-min-silence").value),
+    vad_max_speech: Number($("vad-max-speech").value),
+    max_chars: Number($("max-chars").value),
+    max_cue: Number($("max-cue").value),
+    formats: formats.length ? formats : ["txt", "sentences", "srt", "vtt", "json"],
+  };
+}
+
+function saveSettings() {
+  try { localStorage.setItem("whisper-settings", JSON.stringify(readSettings())); } catch {}
+}
+
+function restoreSettings(saved) {
+  if (!saved) return;
+  for (const slider of SLIDERS) {
+    const value = saved[slider.key];
+    if (value == null) continue;
+    const node = $(slider.id);
+    if (node) node.value = value;
+  }
+  if (saved.use_vad !== undefined) $("use-vad").value = saved.use_vad ? "1" : "0";
+  if (saved.device) $("device").value = saved.device;
+  if (saved.model && [...$("model").options].some((o) => o.value === saved.model)) {
+    $("model").value = saved.model;
+  }
+  if (Array.isArray(saved.formats)) {
+    document.querySelectorAll("#formats input").forEach((node) => {
+      node.checked = saved.formats.includes(node.value);
+    });
+  }
+  syncSliders();
+}
+
+function syncSliders() {
+  for (const slider of SLIDERS) {
+    const node = $(slider.id);
+    const out = $(`${slider.id}-val`);
+    if (node && out) out.textContent = Number(node.value).toFixed(slider.dp);
+  }
+  saveSettings();
+}
+
+function bindSliders() {
+  for (const slider of SLIDERS) {
+    const node = $(slider.id);
+    if (node) node.addEventListener("input", syncSliders);
+  }
+  syncSliders();
+}
+
+function renderFormats(formats, defaults) {
+  const box = $("formats");
+  clear(box);
+  const labels = { txt: "Transcript .txt", sentences: "Sentences .txt", srt: "Subtitles .srt",
+                   vtt: "Subtitles .vtt", json: "Transcript .json" };
+  for (const fmt of formats) {
+    const input = el("input", { attrs: { type: "checkbox", value: fmt } });
+    input.checked = true;
+    input.addEventListener("change", saveSettings);
+    box.appendChild(el("label", { class: "field", attrs: { style: "grid-auto-flow:column;align-items:center;gap:6px" } },
+      [input, el("span", { text: labels[fmt] || fmt })]));
+  }
+}
+
+/* --------------------------------------------------------------- rendering */
+function renderEnv() {
+  const c = state.config;
+  if (!c) return;
+  const bits = [`providers: ${c.providers.join(", ")}`];
+  if (!c.gpu) bits.push("GPU: not in this build");
+  bits.push(`threads max ${c.cpu_count}`);
+  $("env-pill").textContent = bits.join(" · ");
+}
+
+function renderModels(selected) {
+  const box = $("model");
+  clear(box);
+  for (const model of state.config.models) {
+    const option = el("option", { text: model.label });
+    option.value = model.key;
+    box.appendChild(option);
+  }
+  if (selected && state.config.models.some((m) => m.key === selected)) box.value = selected;
+  renderModelHint();
+}
+
+function renderModelHint() {
+  const spec = state.config.models.find((m) => m.key === $("model").value);
+  const hint = $("model-hint");
+  if (!spec) { hint.textContent = ""; return; }
+  hint.textContent = [spec.detail, spec.description].filter(Boolean).join(" — ");
+}
+
+function renderDownloadPanel() {
+  const hasModels = state.config.models.length > 0;
+  $("download-panel").classList.toggle("hidden", hasModels);
+  if (hasModels) return;
+  const box = $("download-model");
+  clear(box);
+  for (const item of state.config.downloads) {
+    const option = el("option", { text: `${item.label} — ~${item.mb.toFixed(0)} MB` });
+    option.value = item.key;
+    box.appendChild(option);
+  }
+}
+
+function queueItem(entry) {
+  return {
+    path: entry.path,
+    name: entry.name,
+    folder: entry.folder,
+    size_label: entry.size_label,
+    duration: entry.duration,
+    duration_label: entry.duration_label,
+    tracks: entry.tracks || [],
+    error: entry.error || null,
+    uploaded: !!entry.uploaded,
+  };
+}
+
+function renderQueue() {
+  const body = $("queue-body");
+  clear(body);
+  $("queue-count").textContent = String(state.queue.length);
+  $("queue-empty").classList.toggle("hidden", state.queue.length > 0);
+
+  state.queue.forEach((item, index) => {
+    const notes = [];
+    if (item.error) notes.push(el("span", { class: "pill bad", text: "unreadable" }));
+    const name = el("div", {}, [el("div", { text: item.name })]);
+    if (notes.length) name.appendChild(el("div", { class: "tiny", attrs: { style: "margin-top:4px" } }, notes));
+    name.appendChild(el("div", { class: "tiny muted", text: item.error || item.folder }));
+
+    const row = el("tr", {}, [
+      el("td", {}, [name]),
+      el("td", { class: "num", text: item.duration_label || "?" }),
+      el("td", { class: "num", text: item.tracks.length || "—" }),
+      el("td", { class: "num", text: item.size_label || "?" }),
+      el("td", {}, [
+        el("button", {
+          class: "small danger", text: "×", attrs: { title: "remove from queue" },
+          on: { click: () => { state.queue.splice(index, 1); renderQueue(); } },
+        }),
+      ]),
+    ]);
+    body.appendChild(row);
+  });
+
+  const single = state.queue.length === 1 ? state.queue[0] : null;
+  const multi = single && !single.error && single.tracks.length > 1;
+  $("track-field").classList.toggle("hidden", !multi);
+  if (multi) {
+    const box = $("track");
+    clear(box);
+    for (const track of single.tracks) {
+      const option = el("option", {
+        text: `${track.label}${track.language && track.language !== "und" ? " · " + track.language : ""}`,
+      });
+      option.value = String(track.index);
+      if (track.is_default) option.selected = true;
+      box.appendChild(option);
+    }
+  }
+
+  const total = state.queue.length;
+  const broken = state.queue.filter((item) => item.error).length;
+  $("run-btn").disabled = state.busy || total === 0;
+  $("run-btn").textContent = total > 1 ? `Transcribe ${total} files` : "Transcribe";
+  $("run-hint").textContent = state.busy
+    ? "one job at a time — the model stays hot between files"
+    : (total > 1
+      ? "files run one after another; a failure does not stop the queue" +
+        (broken ? ` (${broken} unreadable file(s) will be recorded as failed)` : "")
+      : "");
+}
+
+function renderProgress(job) {
+  const bar = $("progress");
+  const msg = $("progress-msg");
+  if (!job) { bar.classList.add("hidden"); msg.textContent = ""; return; }
+  bar.classList.remove("hidden");
+  bar.value = Math.max(0, Math.min(1, job.progress || 0));
+  const bits = [];
+  if (job.message) bits.push(job.message);
+  if (job.finished) bits.push(`· ${job.elapsed.toFixed(1)} s`);
+  msg.textContent = bits.join(" ");
+}
+
+function renderResults(job) {
+  const section = $("results-section");
+  const alerts = $("result-alerts");
+  clear(alerts);
+  clear($("bulk-links"));
+  clear($("detail"));
+
+  const outcome = job.results;
+  if (!outcome || !outcome.length) {
+    const settled = job.status === "failed" || job.status === "cancelled";
+    section.classList.toggle("hidden", !settled);
+    clear($("metrics"));
+    clear($("result-body"));
+    if (settled) {
+      if (job.error) showAlert(alerts, "error", job.error);
+      else showAlert(alerts, "warn", "cancelled before any file finished");
+    }
+    return;
+  }
+  section.classList.remove("hidden");
+
+  const summary = job.summary || {};
+  const metrics = $("metrics");
+  clear(metrics);
+  const push = (k, v) => metrics.appendChild(el("div", { class: "metric" }, [
+    el("div", { class: "k", text: k }), el("div", { class: "v", text: v }),
+  ]));
+  push("Files", `${summary.ok} of ${summary.total}`);
+  push("Audio", `${((summary.audio_seconds || 0) / 60).toFixed(1)} min`);
+  push("Elapsed", `${(summary.wall_seconds || 0).toFixed(0)} s`);
+  push("Real-time factor", `${(summary.rtf || 0).toFixed(2)}×`);
+  push("Words", (summary.words || 0).toLocaleString());
+
+  if (job.note) showAlert(alerts, "warn", job.note);
+  if (job.error) showAlert(alerts, "error", job.error);
+  if (summary.failed) {
+    showAlert(alerts, "error", `${summary.failed} file(s) failed — the rest of the queue still ran.`);
+  }
+  for (const problem of summary.problems || []) showAlert(alerts, "warn", problem);
+
+  const body = $("result-body");
+  clear(body);
+  outcome.forEach((item, index) => {
+    const row = el("tr", { class: "clickable" }, [
+      el("td", { text: item.name }),
+      el("td", {}, [pill(item.status)]),
+      el("td", { class: "num", text: item.duration || "—" }),
+      el("td", { class: "num", text: item.segments ?? "—" }),
+      el("td", { class: "num", text: item.words != null ? item.words.toLocaleString() : "—" }),
+      el("td", { class: "num", text: item.rtf != null ? item.rtf.toFixed(2) + "×" : "—" }),
+    ]);
+    row.addEventListener("click", () => showDetail(job, index));
+    body.appendChild(row);
+  });
+
+  const zip = el("a", { text: "⬇ All transcripts (.zip)", attrs: { href: `/download/${job.id}/zip` } });
+  if (summary.ok > 0 && summary.total > 1) $("bulk-links").appendChild(zip);
+
+  const firstOk = outcome.findIndex((item) => item.status === "ok");
+  if (firstOk >= 0) showDetail(job, firstOk);
+}
+
+async function showDetail(job, index) {
+  const item = job.results[index];
+  if (!item || item.status !== "ok") return;
+  const token = ++detailToken;
+  const detail = $("detail");
+  clear(detail);
+  const notice = el("div", { class: "muted tiny", text: `Loading preview for ${item.name}…` });
+  detail.appendChild(notice);
+
+  const links = el("div", { class: "links" });
+  for (const fmt of item.formats || []) {
+    links.appendChild(el("a", { text: `⬇ ${fmt}`, attrs: { href: `/download/${job.id}/${index}/${fmt}` } }));
+  }
+  const pre = el("pre", { class: "transcript" });
+  detail.appendChild(el("h3", { text: item.name, attrs: { style: "font-size:15px;margin:0 0 8px" } }));
+  detail.appendChild(links);
+  detail.appendChild(el("p", { class: "tiny muted", text: "Preview — first 20 000 characters of the plain text." }));
+  detail.appendChild(pre);
+
+  try {
+    const response = await fetch(`/download/${job.id}/${index}/txt?limit=20000`);
+    if (token !== detailToken) return;
+    pre.textContent = response.ok ? await response.text() : "preview unavailable";
+  } catch {
+    pre.textContent = "preview unavailable";
+  } finally {
+    if (token === detailToken) notice.remove();
+  }
+}
+
+/* ------------------------------------------------------------------- queue */
+function addEntries(entries) {
+  for (const entry of entries) {
+    const item = queueItem(entry);
+    if (state.queue.some((existing) => existing.path === item.path)) continue;
+    state.queue.push(item);
+  }
+  renderQueue();
+}
+
+async function uploadFile(file, index, total) {
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    const url = `/api/upload?name=${encodeURIComponent(file.name)}`;
+    xhr.open("POST", url);
+    xhr.setRequestHeader("X-Whisper", "1");
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      const pct = ((event.loaded / event.total) * 100).toFixed(0);
+      $("upload-status").textContent = `uploading ${file.name} (${index} of ${total}) — ${pct}%`;
+    };
+    xhr.onload = () => {
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (xhr.status >= 400) { showAlert($("alerts"), "error", `${file.name}: ${data.error}`); resolve(null); }
+        else resolve(data);
+      } catch {
+        showAlert($("alerts"), "error", `${file.name}: unreadable server response`);
+        resolve(null);
+      }
+    };
+    xhr.onerror = () => { showAlert($("alerts"), "error", `${file.name}: upload failed`); resolve(null); };
+    xhr.send(file);
+  });
+}
+
+async function uploadFiles(files) {
+  const list = [...files];
+  if (!list.length) return;
+  const total = list.length;
+  const entries = [];
+  for (const [index, file] of list.entries()) {
+    if (state.config.max_upload_bytes && file.size > state.config.max_upload_bytes) {
+      showAlert($("alerts"), "error", `${file.name} is larger than the ${Math.round(state.config.max_upload_bytes / 1e9)} GB limit`);
+      continue;
+    }
+    const entry = await uploadFile(file, index + 1, total);
+    if (entry) entries.push(entry);
+  }
+  $("upload-status").textContent = entries.length ? `added ${entries.length} file(s)` : "";
+  addEntries(entries);
+}
+
+async function addPaths() {
+  const text = $("paths").value.trim();
+  if (!text) return;
+  try {
+    const data = await api("/api/paths", { method: "POST", json: { text } });
+    clear($("alerts"));
+    for (const problem of data.problems || []) showAlert($("alerts"), "warn", problem);
+    addEntries(data.entries || []);
+    if ((data.entries || []).length) $("paths").value = "";
+  } catch (error) {
+    showAlert($("alerts"), "error", error.message);
+  }
+}
+
+/* -------------------------------------------------------------------- runs */
+function startPolling(jobId) {
+  stopPolling();
+  state.poll = setInterval(() => pollJob(jobId), 700);
+}
+
+function stopPolling() {
+  if (state.poll) clearInterval(state.poll);
+  state.poll = null;
+}
+
+async function pollJob(jobId) {
+  try {
+    const job = await api(`/api/job?id=${encodeURIComponent(jobId)}`);
+    state.job = job;
+    state.busy = job.status === "running";
+    $("cancel-btn").classList.toggle("hidden", !state.busy);
+    renderProgress(job);
+    renderQueue();
+    if (job.kind === "transcribe") renderResults(job);
+    if (job.kind === "download") renderDownloadProgress(job);
+    if (!state.busy) {
+      stopPolling();
+      if (job.kind === "download") await refreshConfig(job);
+      renderQueue();
+    }
+  } catch (error) {
+    stopPolling();
+    state.busy = false;
+    renderQueue();
+    showAlert($("alerts"), "error", error.message);
+  }
+}
+
+function renderDownloadProgress(job) {
+  $("download-progress-row").style.display = "flex";
+  $("download-progress").value = job.progress || 0;
+  $("download-progress-msg").textContent = job.error || job.message || "";
+  $("download-btn").disabled = job.status === "running";
+}
+
+async function runTranscription() {
+  const queued = state.queue;
+  if (!queued.length) return;
+  const payload = { ...readSettings(), paths: queued.map((item) => item.path) };
+  if (queued.length === 1 && !$("track-field").classList.contains("hidden")) {
+    payload.stream_index = Number($("track").value);
+  }
+  clear($("alerts"));
+  try {
+    const job = await api("/api/transcribe", { method: "POST", json: payload });
+    state.busy = true;
+    state.job = job;
+    $("cancel-btn").classList.remove("hidden");
+    $("results-section").classList.add("hidden");
+    renderQueue();
+    renderProgress(job);
+    startPolling(job.id);
+  } catch (error) {
+    showAlert($("alerts"), "error", error.message);
+  }
+}
+
+async function cancelJob() {
+  const job = state.job;
+  if (!job) return;
+  try {
+    await api("/api/cancel", { method: "POST", json: { id: job.id } });
+  } catch (error) {
+    showAlert($("alerts"), "error", error.message);
+  }
+}
+
+async function startDownload() {
+  const modelKey = $("download-model").value;
+  try {
+    const job = await api("/api/download-model", { method: "POST", json: { model: modelKey } });
+    $("download-btn").disabled = true;
+    state.job = job;
+    state.busy = true;
+    startPolling(job.id);
+  } catch (error) {
+    showAlert($("alerts"), "error", error.message);
+  }
+}
+
+/* ------------------------------------------------------------------- boot */
+async function refreshConfig(previousJob) {
+  const config = await api("/api/state");
+  state.config = config;
+  renderEnv();
+  renderDownloadPanel();
+  const modelBefore = $("model").value;
+  renderModels(modelBefore || config.defaults.model);
+  $("device").innerHTML = "";
+  for (const device of ["cpu", ...(config.gpu ? ["cuda"] : [])]) {
+    const option = el("option", { text: device === "cpu" ? "CPU" : "GPU (CUDA)" });
+    option.value = device;
+    $("device").appendChild(option);
+  }
+  $("threads").max = String(Math.max(1, config.cpu_count));
+  if (!previousJob && config.job) {
+    state.job = config.job;
+    if (config.job.kind === "transcribe") renderResults(config.job);
+    if (config.job.kind === "download") renderDownloadProgress(config.job);
+    if (config.job.status === "running") { state.busy = true; startPolling(config.job.id); }
+  }
+  renderQueue();
+}
+
+async function boot() {
+  const drop = $("drop");
+  const input = $("file-input");
+  drop.addEventListener("click", () => input.click());
+  drop.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") input.click(); });
+  input.addEventListener("change", () => { uploadFiles(input.files); input.value = ""; });
+  for (const type of ["dragenter", "dragover"]) {
+    drop.addEventListener(type, (event) => { event.preventDefault(); drop.classList.add("over"); });
+  }
+  for (const type of ["dragleave", "drop"]) {
+    drop.addEventListener(type, (event) => { event.preventDefault(); drop.classList.remove("over"); });
+  }
+  drop.addEventListener("drop", (event) => {
+    if (event.dataTransfer && event.dataTransfer.files.length) uploadFiles(event.dataTransfer.files);
+  });
+
+  $("add-paths").addEventListener("click", addPaths);
+  $("clear-queue").addEventListener("click", () => { state.queue = []; renderQueue(); });
+  $("run-btn").addEventListener("click", runTranscription);
+  $("cancel-btn").addEventListener("click", cancelJob);
+  $("download-btn").addEventListener("click", startDownload);
+  $("use-vad").addEventListener("change", saveSettings);
+  $("model").addEventListener("change", () => { renderModelHint(); saveSettings(); });
+
+  try {
+    await refreshConfig();
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem("whisper-settings") || "null"); } catch {}
+    renderFormats(state.config.formats);
+    bindSliders();
+    if (saved) restoreSettings(saved);
+    renderQueue();
+  } catch (error) {
+    showAlert($("alerts"), "error", `Cannot reach the server: ${error.message}`);
+  }
+}
+
+boot();
+</script>
+</body>
+</html>

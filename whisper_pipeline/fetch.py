@@ -1,6 +1,6 @@
 """Fetch model assets into the local ``models/`` directory. Standard library only.
 
-Kept free of package-level imports so it works three ways: from the Streamlit app
+Kept free of package-level imports so it works three ways: from the web UI
 (frozen bundle or venv), from a bare interpreter before the venv exists, and from
 ``scripts/download_models.py``, which re-exports the same tables.
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Assemble a self-contained "unzip and run" bundle for the host platform.
 
-The bundle is a folder, not a single executable — deliberately. Freezing
-Streamlit, PyAV's FFmpeg DLLs and onnxruntime into a PyInstaller exe is a long
-tail of hidden-import archaeology, and `--onefile` would unpack ~730 MB into a
+The bundle is a folder, not a single executable — deliberately. Freezing PyAV's
+FFmpeg DLLs and onnxruntime into a PyInstaller exe is a long
+tail of hidden-import archaeology, and `--onefile` would unpack ~320 MB into a
 temp directory on every launch. A portable CPython plus the same wheels
 `uv sync` installs has none of that fragility and still needs no setup: unzip,
 double-click ``Start.bat``, transcribe.
@@ -95,15 +95,12 @@ def launcher_scripts(python_native: str, python_posix: str) -> dict[str, str]:
     """
     header = '@echo off\r\nsetlocal\r\ncd /d "%~dp0"\r\nset PYTHONUTF8=1\r\n'
     exe = f'"%~dp0{python_native}"'
-    streamlit = (
-        f'{exe} -m streamlit run "%~dp0app.py" '
-        "--server.maxUploadSize=4096 --browser.gatherUsageStats=false %*\r\n"
-    )
+    web_ui = f"{exe} -m whisper_pipeline.web %*\r\n"
     return {
         "Start.bat": (
             header
             + "title Local Transcriber\r\n"
-            + streamlit
+            + web_ui
             + "echo.\r\necho The app stopped. Press any key to close.\r\n"
             + "pause >nul\r\n"
         ),
@@ -122,8 +119,7 @@ def launcher_scripts(python_native: str, python_posix: str) -> dict[str, str]:
         ),
         "start.sh": (
             '#!/bin/sh\ncd "$(dirname "$0")"\nexport PYTHONUTF8=1\n'
-            f"exec ./{python_posix} -m streamlit run app.py "
-            '--server.maxUploadSize=4096 --browser.gatherUsageStats=false "$@"\n'
+            f'exec ./{python_posix} -m whisper_pipeline.web "$@"\n'
         ),
         "transcribe.sh": (
             '#!/bin/sh\ncd "$(dirname "$0")"\nexport PYTHONUTF8=1\n'
@@ -140,13 +136,13 @@ def readme_text(zip_name: str) -> str:
 No installation. Unzip anywhere you can write (Desktop, C:\\Tools, a USB stick)
 and double-click Start.bat. Your browser opens the transcription page.
 
-First run: the app has no speech model yet, so the sidebar offers a one-time
+First run: the app has no speech model yet, so the page offers a one-time
 download (~483 MB). It needs internet once and lands in the models folder
 beside this file; every run after that is fully offline.
 
   Start.bat              the web UI (the usual entry point)
   Transcribe.bat         command line, e.g.  Transcribe.bat ..\\clips -f txt
-  app.py                 the Streamlit page
+  app.py                 launcher for the web UI
   whisper_pipeline\\      the engine
   runtime\\               self-contained Python {py}, do not edit
   models\\                downloaded models live here
@@ -158,7 +154,7 @@ Notes
 * Windows may show "Windows protected your PC" because the launcher is not
   code-signed: More info -> Run anyway. Some antivirus tools flag any freshly
   built unsigned launcher for a day or two; the bundle contains nothing but
-  CPython, PyAV, onnxruntime and Streamlit.
+  CPython, PyAV, onnxruntime and the built-in web page.
 * Uninstall = delete this folder.
 * Delete models\\ to reclaim disk space, or move it to a bigger drive and run
   the app from there.

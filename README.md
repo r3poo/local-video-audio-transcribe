@@ -1,6 +1,6 @@
 # python-whisper
 
-Local video/audio transcription with a Streamlit UI and a CLI. Audio is demuxed and
+Local video/audio transcription with a local web UI and a CLI. Audio is demuxed and
 decoded by **PyAV** (bundled FFmpeg libraries — no system `ffmpeg` to install) and
 recognised by **sherpa-onnx** (ONNX Runtime). Runs on CPU out of the box; the same
 code drives a CUDA GPU when one is available.
@@ -13,6 +13,10 @@ video/audio file ─▶ PyAV demux ─▶ 16 kHz mono float32 ─▶ Silero VAD 
 
 - **No external binaries.** PyAV ships FFmpeg as Python wheels, so `pip install` is
   the whole setup on Linux, macOS and Windows.
+- **No web framework either.** The UI is `http.server` from the standard library plus
+  one static HTML page: no Flask, no Streamlit, nothing to install beyond `av`,
+  `numpy` and `sherpa-onnx`. The runtime is ~320 MB rather than ~730 MB, and the
+  page works offline.
 - **Parakeet TDT 0.6B v2 wired up.** NVIDIA NeMo transducer with native punctuation,
   capitalisation and word timestamps.
 - **Speaker-aware subtitle timing.** VAD splits on silence so each utterance is
@@ -42,7 +46,7 @@ video/audio file ─▶ PyAV demux ─▶ 16 kHz mono float32 ─▶ Silero VAD 
 cd python-whisper
 uv sync                                    # creates .venv, installs deps + dev tools
 uv run python scripts/download_models.py   # ~1.1 GB, one time
-uv run streamlit run app.py
+uv run python app.py                       # http://127.0.0.1:8501
 ```
 
 **With plain pip and a venv:**
@@ -53,7 +57,7 @@ python3 -m venv .venv                      # Windows: py -3 -m venv .venv
 source .venv/bin/activate                  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt            # or: pip install -e .
 python scripts/download_models.py          # ~1.1 GB, one time
-.venv/bin/streamlit run app.py
+.venv/bin/python app.py                    # http://127.0.0.1:8501
 ```
 
 Both routes install the `python-whisper` command (`uv run python-whisper …` or
@@ -63,8 +67,9 @@ which is a thin shim onto `whisper_pipeline/cli.py`.
 `python scripts/check_runtime.py` prints which ONNX Runtime the install actually
 uses — the one check worth running whenever sherpa-onnx refuses to load a model.
 
-A built wheel contains the library and the CLI; the Streamlit UI (`app.py`) stays in
-the checkout, where `uv run streamlit run app.py` picks up the same environment.
+A built wheel contains the library and the CLI; the web UI (`app.py` plus
+`whisper_pipeline/web.py` and `whisper_pipeline/static/index.html`) stays in the
+checkout, where `python app.py` picks up the same environment.
 
 The downloader writes into `models/` and skips anything already present
 (`--force` re-fetches, `--only vad` fetches a single asset).
@@ -83,8 +88,8 @@ or run it yourself from any OS with `uv` on PATH:
 
 ```bash
 uv run --no-project python packaging/build_bundle.py
-# → dist/whisper-portable-windows-x86_64/  (~730 MB)
-# → dist/whisper-portable-windows-x86_64.zip  (~230 MB)
+# → dist/whisper-portable-windows-x86_64/  (~320 MB)
+# → dist/whisper-portable-windows-x86_64.zip  (~135 MB)
 ```
 
 Ship the zip. The recipient unzips it anywhere writable and double-clicks
@@ -92,9 +97,9 @@ Ship the zip. The recipient unzips it anywhere writable and double-clicks
 
 | File in the bundle | What it does |
 | --- | --- |
-| `Start.bat` / `start.sh` | starts Streamlit and opens the browser |
+| `Start.bat` / `start.sh` | starts the web UI and opens the browser |
 | `Transcribe.bat` / `transcribe.sh` | the CLI: `Transcribe.bat "C:\clips" -f txt,sentences` |
-| `runtime/` | embedded CPython 3.12 with av, numpy, pyarrow, sherpa-onnx, streamlit — don't edit or move |
+| `runtime/` | embedded CPython 3.12 with av, numpy and sherpa-onnx (+ onnxruntime) — don't edit or move |
 | `models/` | empty on first run; the app offers a one-time download, then works offline |
 | `README-FIRST.txt` | the same instructions, for whoever opens the zip |
 
@@ -112,11 +117,11 @@ Weights are copied from your local `models/` folder, so run
 re-downloading the interpreter and wheels — used for iterating on the app).
 
 **Why a folder and not one `.exe`.** A PyInstaller `--onefile` build has to unpack
-~700 MB into a temp directory on every launch, and Streamlit's static assets plus
-PyAV's FFmpeg DLLs need hand-maintained hidden-import lists that break on every
-upgrade. An embedded interpreter plus ordinary wheels has neither problem, stays
-debuggable (`runtime\python.exe -m pip install ...` works), and is what the
-"portable app" tools do under the hood anyway.
+~320 MB into a temp directory on every launch, and PyAV's FFmpeg DLLs need
+hand-maintained hidden-import lists that break on every upgrade. An embedded
+interpreter plus ordinary wheels has neither problem, stays debuggable
+(`runtime\python.exe -m pip install ...` works), and is what the "portable app"
+tools do under the hood anyway.
 
 ### Caveats for the Windows zip
 
@@ -124,7 +129,7 @@ debuggable (`runtime\python.exe -m pip install ...` works), and is what the
   *Windows protected your PC* → **More info** → **Run anyway**. Sign the `.bat`/
   `.exe` or publish a SHA-256 next to the zip to reduce the friction.
 - **Antivirus** sometimes quarantines freshly built unsigned launchers. The bundle
-  contains only CPython, Streamlit, PyAV and onnxruntime; submit a false-positive
+  contains only CPython, numpy, PyAV and onnxruntime; submit a false-positive
   report if a customer hits it.
 - **CPU only**: the bundle installs the CPU wheels and has no CUDA runtime. GPU use
   needs the CUDA wheel plus an NVIDIA driver — see *GPU setup*.
@@ -163,25 +168,44 @@ know about.
 ## Web UI
 
 ```bash
-.venv/bin/streamlit run app.py          # then open http://localhost:8501
+.venv/bin/python app.py                 # then open http://127.0.0.1:8501
+python app.py --port 9000 --no-browser  # other port, don't open a tab
 ```
 
-- Pick a model, device and thread count in the sidebar.
-- Upload one file or several (the uploader takes a multi-selection), or drop a list of
-  paths into the `Local paths` box — one per line, directories welcome. Quotes are
-  stripped, so a path copied from Explorer (`"C:\\Videos\\My clip.mp4"`), a shell
-  (`'/home/me/talk.m4a'`) or a whole quoted multi-selection pastes cleanly. More than one
-  file switches the page into batch mode: a queue table, one progress bar for the whole
-  queue, then batch totals, a per-file status table and a **zip** with every transcript.
-- Review the transcript, the segment table, the generated subtitles and the JSON
-  payload; download any of them. The **Sentences .txt** button writes
-  `NAME_transcript_sentences.txt`: the VAD cuts merged back into whole sentences.
-- In a batch, `Inspect one transcript` re-opens that single-file view — same tabs, same
-  downloads — for any file that succeeded. A failed file is reported in the table and
-  never stops the queue.
+The page is served by `http.server` from the standard library — one static HTML file
+with inline CSS and vanilla JS, so it renders with no network access and nothing to
+install. `app.py` is a shim; the server itself is `whisper_pipeline/web.py`.
 
-The model is cached per (model, device, threads) with `max_entries=1`, so switching
-models frees the previous one instead of holding every model in RAM.
+- **Settings**: model (with a one-line spec plus its accuracy note), compute (CPU, or
+  GPU when the installed sherpa-onnx build exposes CUDA), thread count, VAD on/off,
+  VAD tuning, subtitle character/cue budget, and which formats to write.
+- **Files**: drag and drop or pick several at once (uploads are streamed to a temp
+  directory, not held in RAM), or paste paths — one per line, directories expanded
+  recursively, quotes stripped, duplicates collapsed. Same parser as the CLI, so a
+  path copied from Explorer (`"C:\\Videos\\My clip.mp4"`) or a shell
+  (`'/home/me/talk.m4a'`) works either way.
+- **Queue**: per-file duration, audio track count and size. A file that cannot be opened
+  is flagged in place and still runs — it is recorded as `failed` instead of stopping the
+  queue, so the totals always account for everything you added.
+- **Run**: one job at a time, on a worker thread, with a streamed progress bar and the
+  current file in the caption. **Cancel** stops at the next decode block and keeps the
+  files that already finished.
+- **Results**: totals (files, audio minutes, elapsed, RTF, words), a per-file status
+  table — click a row for a text preview and its five download buttons — and, for a
+  batch, one **zip** with every transcript. Failed files are listed with their error and
+  never stop the queue.
+- **Reload-safe**: the server keeps the last job, so refreshing the page (or opening a
+  second tab) shows the same results instead of losing them. Settings persist in
+  `localStorage`.
+- **First run**: if no model is on disk the page offers the one-time download with
+  progress, then unlocks.
+
+It binds to `127.0.0.1` only, requires an `X-Whisper` header on every POST (so a
+random web page cannot drive it), and caps uploads at 16 GB per file. `--host 0.0.0.0`
+opens it to the LAN — only do that on a network you trust, since anyone who reaches
+the port can queue files and read the transcripts. The model is
+cached per (model, device, threads) with one live entry, so switching models frees the
+previous one instead of holding every model in RAM.
 
 ## CLI
 
@@ -278,7 +302,7 @@ Pick the wheel whose `cp3XX` tag matches your interpreter and whose `cudaXX` mat
 driver/CUDA runtime you have; nothing else in the environment should supply
 `libonnxruntime.so`.
 
-Then pick **GPU (CUDA)** in the sidebar, or pass `-d cuda` on the CLI.
+Then pick **GPU (CUDA)** under *Compute*, or pass `-d cuda` on the CLI.
 
 Notes:
 
@@ -325,10 +349,16 @@ and first-person `I` are restored; pauses over 2 s become paragraph breaks.
 | `whisper_pipeline/ort_runtime.py` | Locates `sherpa_onnx/lib`, preloads the bundled ONNX Runtime on Windows, reports which one is loaded |
 | `whisper_pipeline/pipeline.py` | Orchestration: decode → segment → recognise → `TranscriptionResult` |
 | `whisper_pipeline/subtitles.py` | SRT/VTT/TXT/JSON rendering and cue splitting |
-| `app.py` / `cli.py` | Streamlit front end / command line front end |
+| `whisper_pipeline/prose.py` | sentence rebuilding: VAD cuts → whole sentences |
+| `whisper_pipeline/batch.py` | queue: expand inputs, transcribe sequentially, collect outcomes |
+| `whisper_pipeline/export.py` | format naming, file writing, zip bundle |
+| `whisper_pipeline/web.py` | HTTP server: routes, streaming upload, job thread, downloads |
+| `whisper_pipeline/static/index.html` | the page (inline CSS + vanilla JS, no CDN) |
+| `app.py` / `cli.py` | web UI entry point / command line front end |
 
-`Transcriber.transcribe()` takes a lock, because Streamlit serves sessions from
-multiple threads and a single recogniser cannot be used concurrently.
+`Transcriber.transcribe()` takes a lock: the server runs jobs on a worker thread
+while request threads serve progress polls, and one recogniser cannot be used
+concurrently.
 
 ## Tuning
 
@@ -379,7 +409,7 @@ mapped, and the ORT version in use.
 python-whisper/
 ├── pyproject.toml             project metadata, deps, `python-whisper` entry point
 ├── uv.lock                    pinned resolution (uv sync)
-├── app.py                     Streamlit UI
+├── app.py                     web UI entry point (python app.py)
 ├── cli.py                     shim → whisper_pipeline/cli.py
 ├── whisper_pipeline/          the library + CLI
 │   ├── audio.py               PyAV probe + 16 kHz decode
@@ -390,6 +420,8 @@ python-whisper/
 │   ├── models.py              model catalogue, download metadata, provider probe
 │   ├── prose.py               sentence rebuilding (VAD cuts -> prose)
 │   ├── subtitles.py           cue building, srt/vtt/txt/json
+│   ├── web.py                 stdlib HTTP server (routes, jobs, uploads)
+│   ├── static/index.html      the UI page — inline CSS + JS, no CDN
 │   └── types.py               MediaInfo, Segment, Word
 ├── scripts/download_models.py model fetcher (stdlib only)
 ├── packaging/

@@ -143,7 +143,7 @@ def probe(path: str | Path) -> MediaInfo:
     """Inspect a container without decoding its audio.
 
     Costs a few milliseconds, which makes it cheap enough to run on every
-    Streamlit rerun and lets the UI warn about missing audio tracks before a
+    page load and lets the UI warn about missing audio tracks before a
     user waits through a failed decode.
     """
     resolved = Path(path)

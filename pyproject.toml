@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "python-whisper"
 version = "0.1.0"
-description = "Local video/audio transcription with sherpa-onnx and PyAV, plus a Streamlit UI"
+description = "Local video/audio transcription with sherpa-onnx and PyAV, plus a built-in web UI"
 readme = "README.md"
 requires-python = ">=3.10"
 # No licence is asserted yet. Pick one, add a LICENSE file, then set e.g. license = "MIT".
@@ -17,7 +17,7 @@ keywords = [
   "sherpa-onnx",
   "whisper",
   "parakeet",
-  "streamlit",
+  "cli",
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -47,7 +47,6 @@ dependencies = [
   # dies with "requested API version [28] is not available, only [1, 17]".
   # Bump both lines together when upgrading the engine.
   "sherpa-onnx-core==1.13.8",
-  "streamlit>=1.36,<2",
 ]
 
 [project.scripts]
@@ -65,10 +64,6 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4"]
-
-[tool.ruff.lint.per-file-ignores]
-# Streamlit help strings and docstrings are written for humans, not for the linter.
-"app.py" = ["E501"]
 
 [tool.ruff.format]
 quote-style = "double"

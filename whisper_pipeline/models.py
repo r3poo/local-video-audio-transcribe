@@ -122,7 +122,7 @@ def default_model() -> ModelSpec:
     available = available_models()
     if not available:
         raise FileNotFoundError(
-            f"no models found under {model_root()} — download one in the app's sidebar, "
+            f"no models found under {model_root()} — download one in the app's settings, "
             "or run scripts/download_models.py"
         )
     return available[0]

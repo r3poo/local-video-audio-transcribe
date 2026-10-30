@@ -1,7 +1,7 @@
 """Serialise transcription results to files or a zip bundle.
 
 One place decides what a format is called and what it contains, so the CLI, the
-batch runner and the Streamlit app cannot drift apart. ``txt``/``srt``/``vtt``/
+batch runner and the web UI cannot drift apart. ``txt``/``srt``/``vtt``/
 ``json`` keep the names they have always had; only ``sentences`` adds a suffix.
 """
 
