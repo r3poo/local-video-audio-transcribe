@@ -45,7 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
         "-m",
         "--model",
         default=None,
-        help="model key (e.g. parakeet-tdt-0.6b-v2, whisper-base-en). "
+        help="model key (e.g. parakeet-tdt-0.6b-v2, or a key from --list-models). "
         "Defaults to the best installed model.",
     )
     parser.add_argument(

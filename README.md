@@ -13,9 +13,8 @@ video/audio file ─▶ PyAV demux ─▶ 16 kHz mono float32 ─▶ Silero VAD 
 
 - **No external binaries.** PyAV ships FFmpeg as Python wheels, so `pip install` is
   the whole setup on Linux, macOS and Windows.
-- **Two model families wired up.** NVIDIA Parakeet TDT 0.6B v2 (best English
-  accuracy, native punctuation + word timestamps) and Whisper base.en (smaller,
-  useful baseline).
+- **Parakeet TDT 0.6B v2 wired up.** NVIDIA NeMo transducer with native punctuation,
+  capitalisation and word timestamps.
 - **Speaker-aware subtitle timing.** VAD splits on silence so each utterance is
   decoded as a whole; subtitles are then re-split into readable cues at word
   boundaries, targeting a character budget and a max cue duration.
@@ -32,7 +31,7 @@ video/audio file ─▶ PyAV demux ─▶ 16 kHz mono float32 ─▶ Silero VAD 
 ## Requirements
 
 - Python 3.10 – 3.13 (tested on 3.13.5, Linux; `dataclass(slots=True)` sets the floor at 3.10)
-- ~1.2 GB disk for models, ~2 GB RAM while transcribing with Parakeet
+- ~0.7 GB disk for the model, ~2 GB RAM while transcribing
 - No GPU required
 
 ## Install
@@ -136,38 +135,30 @@ debuggable (`runtime\python.exe -m pip install ...` works), and is what the
 
 ## Models
 
-| Key | Files | Quality | RTF (CPU, 2 threads) |
+| Key | On disk | Quality | RTF (CPU, 2 threads) |
 | --- | --- | --- | --- |
-| `parakeet-tdt-0.6b-v2` | ~660 MB | Best English; punctuation, casing, digits | 0.07 |
-| `whisper-base.en-int8` | ~160 MB | Lowercase, unpunctuated; more errors | 0.10 |
-| `whisper-base.en-fp32` | ~225 MB | Same weights, full precision | 0.12 |
+| `parakeet-tdt-0.6b-v2` | ~662 MB | English; punctuation, casing, digits | 0.07 |
 | `silero_vad.onnx` | ~2 MB | Segmentation only | — |
 
 RTF = seconds of compute per second of audio, measured on the same 60 s clip of
 spoken English on a 2-core slice of an AMD Ryzen 7 5800X. Lower is better: 0.07
 means a 1-hour recording transcribes in about 4 minutes.
 
-End-to-end check on the bundled 27 min 34 s lecture video (Parakeet, CPU, 2
-threads): 119.7 s wall time, RTF 0.07, 319 utterances, 3 330 words, 419 subtitle
-cues — none over the 84-character budget, no overlaps, no empty or duplicate cues.
+End-to-end check on the bundled 27 min 34 s lecture video (CPU, 2 threads):
+119.7 s wall time, RTF 0.07, 319 utterances, 3 330 words, 419 subtitle cues —
+none over the 84-character budget, no overlaps, no empty or duplicate cues.
 
-Same clip, both models, for calibration:
-
-```
-Parakeet : "Hey students, Teacher Elric here. … apply that knowledge at the word and phrasal levels …"
-Whisper  : "hey students, teacher albert here. … apply that knowledge at the word and freezer levels …"
-```
-
-Both models miss the odd domain term ("Grammar MCQ" comes back as "grammar and
-CQ" in one place in the full lecture); Parakeet keeps casing and punctuation, which
-matters for readable subtitles.
+Parakeet keeps casing and punctuation, which matters for readable subtitles. It
+misses the odd domain term ("Grammar MCQ" comes back as "grammar and CQ" in one
+place in the full lecture), so spot-check proper nouns in technical material.
 
 List what is installed with `python cli.py --list-models`.
 
 Any other sherpa-onnx model directory dropped into `models/` can be loaded with
-`whisper_pipeline.models.spec_from_directory()` helper (auto-detects transducer,
-Whisper, Paraformer and NeMo-CTC layouts), which is how you would add multilingual
-Whisper.
+the `whisper_pipeline.models.spec_from_directory()` helper (auto-detects
+transducer, Whisper, Paraformer and NeMo-CTC layouts) — that is how you would add a
+multilingual Whisper, SenseVoice or GigaAM directory that the catalogue does not
+know about.
 
 ## Web UI
 
@@ -371,16 +362,16 @@ mapped, and the ORT version in use.
 
 ## Limitations
 
-- Parakeet TDT 0.6B v2 is **English only**; the catalogue ships no multilingual
-  model. Whisper base.en is English too — add a multilingual model directory if you
-  need one.
+- Language coverage is English only: the catalogue ships a single English model.
+  No Mandarin, Japanese, Korean, Arabic, Hindi or European languages are wired up;
+  dropping a suitable sherpa-onnx model directory into `models/` is the way to add
+  one.
 - No speaker diarisation; segments are utterances, not speakers.
-- Word timestamps come from the model. Whisper in sherpa-onnx returns
-  cross-attention-aligned timings, which are coarser than Parakeet's transducer
-  alignment.
+- Word timestamps come from the model, and their quality follows the model:
+  Parakeet's transducer alignment is tight, Whisper's cross-attention timings
+  (only reachable via `spec_from_directory`) are coarser.
 - Licensing is yours to check: sherpa-onnx is Apache-2.0, Parakeet weights are
-  CC-BY-4.0, Whisper weights are MIT, PyAV's bundled FFmpeg is LGPL/GPL depending
-  on the wheel build.
+  CC-BY-4.0, PyAV's bundled FFmpeg is LGPL/GPL depending on the wheel build.
 
 ## Layout
 

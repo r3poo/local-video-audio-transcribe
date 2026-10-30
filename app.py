@@ -109,7 +109,7 @@ def _first_run_download() -> None:
     """
     st.sidebar.warning("No speech model on disk yet.")
     st.sidebar.caption(
-        "Download one once (~600 MB), it lands in `models/` next to the app. "
+        "Download it once (~483 MB), it lands in `models/` next to the app. "
         "Needs internet; after that everything runs offline."
     )
 
@@ -125,8 +125,7 @@ def _first_run_download() -> None:
         "Model to download",
         options=list(labels),
         format_func=lambda key: labels[key],
-        help="Parakeet is the most accurate English model; Whisper base.en is the "
-        "smaller baseline. Either way the Silero VAD model comes along.",
+        help="The Silero VAD model (segmentation) comes along with it, 0.6 MB.",
     )
     if not st.sidebar.button("Download model", type="primary", use_container_width=True):
         return
@@ -164,7 +163,7 @@ def build_sidebar() -> dict:
         "Model",
         options=list(labels),
         format_func=lambda key: labels[key],
-        help="Parakeet leads on English accuracy; Whisper base.en is a useful baseline.",
+        help="Parakeet produces punctuation, capitalisation and word timestamps.",
     )
     st.sidebar.caption(models.get_model(model_key).description)
 

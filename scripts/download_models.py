@@ -2,7 +2,7 @@
 """Download the default models into ./models.
 
     python scripts/download_models.py                 # everything
-    python scripts/download_models.py --only parakeet
+    python scripts/download_models.py --only parakeet-v2
     python scripts/download_models.py --dest /data/models --force
 
 Only the Python standard library is used, so this runs before (or without) the
@@ -22,15 +22,10 @@ RELEASE = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"
 
 # name -> (remote file, is_tarball, path that proves it is already installed)
 ASSETS: dict[str, tuple[str, bool, str]] = {
-    "parakeet": (
+    "parakeet-v2": (
         "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
         True,
         "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/encoder.int8.onnx",
-    ),
-    "whisper-base": (
-        "sherpa-onnx-whisper-base.en.tar.bz2",
-        True,
-        "sherpa-onnx-whisper-base.en/base.en-encoder.int8.onnx",
     ),
     "vad": ("silero_vad.onnx", False, "silero_vad.onnx"),
 }
@@ -88,7 +83,7 @@ def install(name: str, dest: Path, force: bool) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Download the default speech models into ./models.",
-        epilog="Example: python scripts/download_models.py --only parakeet --force",
+        epilog="Example: python scripts/download_models.py --only parakeet-v2 --force",
     )
     parser.add_argument(
         "--only",

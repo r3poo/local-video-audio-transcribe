@@ -93,45 +93,13 @@ CATALOG: dict[str, ModelSpec] = {
         family=FAMILY_TRANSDUCER,
         directory=model_root() / "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
         description=(
-            "NVIDIA NeMo transducer. Best English accuracy here, with native "
-            "punctuation, capitalisation and word timestamps. Fastest of the three."
+            "NVIDIA NeMo transducer. Best English accuracy available here, with native "
+            "punctuation, capitalisation and word timestamps."
         ),
         languages="English",
-        size_label="~660 MB",
+        size_label="~662 MB",
         model_type="nemo_transducer",
         joiner_name="joiner.int8.onnx",
-    ),
-    "whisper-base.en-int8": ModelSpec(
-        key="whisper-base.en-int8",
-        label="Whisper base.en (int8)",
-        family=FAMILY_WHISPER,
-        directory=model_root() / "sherpa-onnx-whisper-base.en",
-        description=(
-            "OpenAI Whisper, int8-quantised. Lowercase, unpunctuated output, and "
-            "weaker than Parakeet on this material — kept for comparison."
-        ),
-        languages="English",
-        size_label="~160 MB",
-        language="en",
-        encoder_name="base.en-encoder.int8.onnx",
-        decoder_name="base.en-decoder.int8.onnx",
-        tokens_name="base.en-tokens.txt",
-    ),
-    "whisper-base.en-fp32": ModelSpec(
-        key="whisper-base.en-fp32",
-        label="Whisper base.en (fp32)",
-        family=FAMILY_WHISPER,
-        directory=model_root() / "sherpa-onnx-whisper-base.en",
-        description=(
-            "Same Whisper weights at full precision — reuses the files already on "
-            "disk, no extra download. About 1.3x slower than int8 (measured)."
-        ),
-        languages="English",
-        size_label="~225 MB",
-        language="en",
-        encoder_name="base.en-encoder.onnx",
-        decoder_name="base.en-decoder.onnx",
-        tokens_name="base.en-tokens.txt",
     ),
 }
 
