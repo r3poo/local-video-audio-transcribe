@@ -19,7 +19,7 @@ from pathlib import Path
 
 from .audio import AudioExtractionError
 from .engine import ModelLoadError, Transcriber, VadOptions
-from .export import DEFAULT_FORMATS, existing_outputs, write_outputs
+from .export import DEFAULT_FORMATS, existing_outputs, payloads, write_outputs
 from .pipeline import TranscriptionResult, transcribe_file
 
 #: Container extensions the walker accepts when an argument is a directory.
@@ -260,6 +260,7 @@ def run_batch(
     outdir: str | Path | None = None,
     formats: Sequence[str] = DEFAULT_FORMATS,
     skip_existing: bool = False,
+    write_files: bool = True,
     stream_index: int | None = None,
     max_chars: int = 84,
     max_cue: float = 6.0,
@@ -273,6 +274,10 @@ def run_batch(
     progress bar keeps climbing across files instead of restarting at zero.
     ``on_start(item, index, total)`` fires before each file and
     ``on_item(item)`` after it, which is where callers print or render.
+
+    ``write_files=False`` keeps every result in memory and writes nothing to
+    disk — the browser UI downloads what it needs instead of dropping files
+    next to the sources (its checkbox turns the writes back on).
     """
     files, problems = expand_inputs(inputs)
     outcome = BatchOutcome(problems=problems)
@@ -284,7 +289,7 @@ def run_batch(
             on_start(item, index, total)
 
         target_dir = Path(outdir) if outdir is not None else path.parent
-        if skip_existing:
+        if write_files and skip_existing:
             targets, complete = existing_outputs(path.stem, target_dir, formats)
             if complete:
                 item.status = "skipped"
@@ -309,15 +314,20 @@ def run_batch(
                 stream_index=stream_index,
                 on_progress=forward,
             )
-            item.outputs = tuple(
-                write_outputs(
-                    item.result,
-                    target_dir,
-                    formats,
-                    max_chars=max_chars,
-                    max_cue=max_cue,
+            if write_files:
+                item.outputs = tuple(
+                    write_outputs(
+                        item.result,
+                        target_dir,
+                        formats,
+                        max_chars=max_chars,
+                        max_cue=max_cue,
+                    )
                 )
-            )
+            else:
+                # Render once on the way out so a bad format fails here, not in
+                # the browser: the payloads are the download endpoints' source.
+                payloads(item.result, formats, max_chars=max_chars, max_cue=max_cue)
             item.status = "ok"
         except (AudioExtractionError, ModelLoadError, OSError) as exc:
             item.status, item.error = "failed", str(exc)

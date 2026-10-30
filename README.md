@@ -179,11 +179,14 @@ install. `app.py` is a shim; the server itself is `whisper_pipeline/web.py`.
 - **Settings**: model (with a one-line spec plus its accuracy note), compute (CPU, or
   GPU when the installed sherpa-onnx build exposes CUDA), thread count, VAD on/off,
   VAD tuning, subtitle character/cue budget, and which formats to write.
-- **Files**: drag and drop or pick several at once (uploads are streamed to a temp
-  directory, not held in RAM), or paste paths — one per line, directories expanded
-  recursively, quotes stripped, duplicates collapsed. Same parser as the CLI, so a
-  path copied from Explorer (`"C:\\Videos\\My clip.mp4"`) or a shell
-  (`'/home/me/talk.m4a'`) works either way.
+- **Files**: **Select files…** / **Select a folder…** open a native file dialog from the
+  server runtime — the browser only learns which paths were chosen, so no audio or
+  video crosses the wire and no temporary copies are written. The dialog is Windows
+  WinForms (PowerShell), macOS `osascript`, or `zenity`/`kdialog`/tkinter on Linux; if
+  none is usable the page says so and the paths box below takes over. Pasting paths
+  also works — one per line, directories expanded recursively, quotes stripped,
+  duplicates collapsed. Same parser as the CLI, so a path copied from Explorer
+  (`"C:\\Videos\\My clip.mp4"`) or a shell (`'/home/me/talk.m4a'`) works either way.
 - **Queue**: per-file duration, audio track count and size. A file that cannot be opened
   is flagged in place and still runs — it is recorded as `failed` instead of stopping the
   queue, so the totals always account for everything you added.
@@ -191,9 +194,16 @@ install. `app.py` is a shim; the server itself is `whisper_pipeline/web.py`.
   current file in the caption. **Cancel** stops at the next decode block and keeps the
   files that already finished.
 - **Results**: totals (files, audio minutes, elapsed, RTF, words), a per-file status
-  table — click a row for a text preview and its five download buttons — and, for a
-  batch, one **zip** with every transcript. Failed files are listed with their error and
-  never stop the queue.
+  table — click a row for a text preview and one download button per **checked**
+  format — and, for a batch, one **zip** with those formats from every transcript.
+  Failed files are listed with their error and never stop the queue.
+- **Formats**: the checkboxes decide what the downloads and the zip contain, and only
+  those files are rendered at all — an unchecked format is not produced. One format
+  always stays checked, because an empty selection would silently mean "all five".
+- **Nothing is written to your folders** unless you tick *Also save these files next to
+  each source*, which writes the checked formats beside each input (the CLI always
+  writes). Without it the app reads your media in place, keeps the results in memory
+  and hands them to the browser.
 - **Reload-safe**: the server keeps the last job, so refreshing the page (or opening a
   second tab) shows the same results instead of losing them. Settings persist in
   `localStorage`.
@@ -201,9 +211,12 @@ install. `app.py` is a shim; the server itself is `whisper_pipeline/web.py`.
   progress, then unlocks.
 
 It binds to `127.0.0.1` only, requires an `X-Whisper` header on every POST (so a
-random web page cannot drive it), and caps uploads at 16 GB per file. `--host 0.0.0.0`
+random web page cannot drive it), and never accepts file uploads — files are only ever
+read from the machine that runs the server. `--host 0.0.0.0`
 opens it to the LAN — only do that on a network you trust, since anyone who reaches
-the port can queue files and read the transcripts. The model is
+the port can queue files and read the transcripts. Note that the file dialog then opens
+on the **server's** desktop, not the viewer's; that is the point of the design (no
+copies), but it means the person clicking must be sitting at the server. The model is
 cached per (model, device, threads) with one live entry, so switching models frees the
 previous one instead of holding every model in RAM.
 
@@ -352,7 +365,8 @@ and first-person `I` are restored; pauses over 2 s become paragraph breaks.
 | `whisper_pipeline/prose.py` | sentence rebuilding: VAD cuts → whole sentences |
 | `whisper_pipeline/batch.py` | queue: expand inputs, transcribe sequentially, collect outcomes |
 | `whisper_pipeline/export.py` | format naming, file writing, zip bundle |
-| `whisper_pipeline/web.py` | HTTP server: routes, streaming upload, job thread, downloads |
+| `whisper_pipeline/web.py` | HTTP server: routes, native-file-dialog bridge, job thread, downloads |
+| `whisper_pipeline/filedialog.py` | server-side picker: WinForms / osascript / zenity / kdialog / tkinter |
 | `whisper_pipeline/static/index.html` | the page (inline CSS + vanilla JS, no CDN) |
 | `app.py` / `cli.py` | web UI entry point / command line front end |
 
@@ -420,7 +434,8 @@ python-whisper/
 │   ├── models.py              model catalogue, download metadata, provider probe
 │   ├── prose.py               sentence rebuilding (VAD cuts -> prose)
 │   ├── subtitles.py           cue building, srt/vtt/txt/json
-│   ├── web.py                 stdlib HTTP server (routes, jobs, uploads)
+│   ├── web.py                 stdlib HTTP server (routes, jobs, downloads)
+│   ├── filedialog.py          native file dialog, opened by the server itself
 │   ├── static/index.html      the UI page — inline CSS + JS, no CDN
 │   └── types.py               MediaInfo, Segment, Word
 ├── scripts/download_models.py model fetcher (stdlib only)

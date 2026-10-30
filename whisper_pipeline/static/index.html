@@ -48,12 +48,9 @@
   button.primary:disabled { opacity: .5; cursor: not-allowed; }
   button.danger { border-color: #4a2b2b; color: #f0a3a3; }
   button.small { padding: 3px 8px; font-size: 12px; }
-  #drop {
-    border: 1.5px dashed #333b4a; border-radius: 10px; padding: 26px; text-align: center;
-    color: var(--muted); transition: border-color .15s, background .15s; cursor: pointer;
-  }
-  #drop.over { border-color: var(--accent); background: #131a2a; }
-  #drop strong { color: var(--text); }
+  #picker { border: 1px solid var(--line); border-radius: 10px; background: #10141d; padding: 14px 16px; }
+  #picker .row { align-items: center; }
+  #picker-hint { color: var(--muted); font-size: 12.5px; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .spacer { flex: 1; }
   table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
@@ -176,24 +173,39 @@
     </details>
 
     <details style="margin-top:12px">
-      <summary class="muted tiny" style="cursor:pointer">Formats</summary>
+      <summary class="muted tiny" style="cursor:pointer">Formats <span class="muted" id="formats-summary"></span></summary>
       <div class="row" style="margin-top:12px" id="formats"></div>
+      <p class="tiny muted" style="margin:10px 0 0">
+        downloads and the <code>.zip</code> contain only the checked formats.
+      </p>
+      <label class="field" style="grid-auto-flow:column;align-items:center;gap:8px;margin-top:10px">
+        <input type="checkbox" id="save-sidecars">
+        <span>Also save these files next to each source</span>
+      </label>
+      <p class="tiny muted" style="margin:6px 0 0">
+        off by default — the app reads your media in place and writes nothing to your folders
+        until you turn this on.
+      </p>
     </details>
   </section>
 
   <!-- Input -->
   <section>
     <h2>Files</h2>
-    <div id="drop" tabindex="0" role="button">
-      <p style="margin:0 0 6px"><strong>Drop video or audio here</strong> — or click to pick files</p>
-      <p class="tiny" style="margin:0">mp4 · mkv · mov · webm · avi · ts · m4a · mp3 · wav · flac · ogg · opus · aac</p>
+    <div id="picker">
+      <div class="row" id="picker-buttons">
+        <button class="primary" id="pick-files">Select files…</button>
+        <button id="pick-folder">Select a folder…</button>
+        <span class="spacer"></span>
+        <span id="picker-hint">the dialog opens on this computer — files are read in place, nothing is copied or uploaded</span>
+      </div>
+      <p class="tiny muted hidden" id="pick-unavailable" style="margin:0"></p>
+      <p class="tiny muted hidden" id="pick-status" style="margin:8px 0 0"></p>
     </div>
-    <input type="file" id="file-input" multiple class="hidden">
-    <p class="tiny muted" id="upload-status"></p>
 
     <div style="margin-top:16px">
-      <label class="field" for="paths">Or paths on this machine (one per line, a folder is expanded)
-        <textarea id="paths" placeholder="/home/me/talks/ep01.mp4&#10;/home/me/talks/&#10;D:\Videos\&quot;My clip.mp4&quot;"></textarea>
+      <label class="field" for="paths">Or paste paths on this machine (one per line, a folder is expanded)
+        <textarea id="paths" placeholder="/path/to/recording.mp4&#10;/path/to/a/folder/&#10;D:\Videos\&quot;My clip.mp4&quot;"></textarea>
       </label>
       <div class="row" style="margin-top:8px">
         <button id="add-paths">Add paths</button>
@@ -339,7 +351,8 @@ function readSettings() {
     vad_max_speech: Number($("vad-max-speech").value),
     max_chars: Number($("max-chars").value),
     max_cue: Number($("max-cue").value),
-    formats: formats.length ? formats : ["txt", "sentences", "srt", "vtt", "json"],
+    formats: formats.length ? formats : ["txt"],
+    save_sidecars: $("save-sidecars").checked,
   };
 }
 
@@ -365,6 +378,8 @@ function restoreSettings(saved) {
       node.checked = saved.formats.includes(node.value);
     });
   }
+  if (saved.save_sidecars !== undefined) $("save-sidecars").checked = !!saved.save_sidecars;
+  lockLastFormat();
   syncSliders();
 }
 
@@ -393,9 +408,31 @@ function renderFormats(formats, defaults) {
   for (const fmt of formats) {
     const input = el("input", { attrs: { type: "checkbox", value: fmt } });
     input.checked = true;
-    input.addEventListener("change", saveSettings);
+    input.addEventListener("change", () => {
+      lockLastFormat();
+      saveSettings();
+    });
     box.appendChild(el("label", { class: "field", attrs: { style: "grid-auto-flow:column;align-items:center;gap:6px" } },
       [input, el("span", { text: labels[fmt] || fmt })]));
+  }
+  lockLastFormat();
+}
+
+/* Exactly one format must stay checked: an empty selection would silently mean
+   "all five" on the server, which is the opposite of what a cleared box says. */
+function lockLastFormat() {
+  const boxes = [...document.querySelectorAll("#formats input")];
+  const checked = boxes.filter((node) => node.checked);
+  const summary = $("formats-summary");
+  if (summary) {
+    summary.textContent = checked.length === boxes.length
+      ? `— all ${boxes.length}`
+      : `— ${checked.length} of ${boxes.length}`;
+  }
+  for (const node of boxes) {
+    const only = checked.length === 1 && node.checked;
+    node.disabled = only;
+    node.title = only ? "at least one format is required" : "";
   }
 }
 
@@ -407,6 +444,20 @@ function renderEnv() {
   if (!c.gpu) bits.push("GPU: not in this build");
   bits.push(`threads max ${c.cpu_count}`);
   $("env-pill").textContent = bits.join(" · ");
+}
+
+function renderPicker() {
+  const info = (state.config && state.config.dialog) || {};
+  const available = !!info.available;
+  $("picker-buttons").classList.toggle("hidden", !available);
+  $("pick-unavailable").classList.toggle("hidden", available);
+  if (available) {
+    $("picker-hint").textContent =
+      `the dialog opens on this computer (${info.provider}) — files are read in place, nothing is copied or uploaded`;
+  } else {
+    $("pick-unavailable").textContent =
+      info.reason || "no file dialog is available here — use the paths box below";
+  }
 }
 
 function renderModels(selected) {
@@ -451,7 +502,6 @@ function queueItem(entry) {
     duration_label: entry.duration_label,
     tracks: entry.tracks || [],
     error: entry.error || null,
-    uploaded: !!entry.uploaded,
   };
 }
 
@@ -598,14 +648,15 @@ async function showDetail(job, index) {
   for (const fmt of item.formats || []) {
     links.appendChild(el("a", { text: `⬇ ${fmt}`, attrs: { href: `/download/${job.id}/${index}/${fmt}` } }));
   }
+  const previewFmt = (item.formats && item.formats[0]) || "txt";
   const pre = el("pre", { class: "transcript" });
   detail.appendChild(el("h3", { text: item.name, attrs: { style: "font-size:15px;margin:0 0 8px" } }));
   detail.appendChild(links);
-  detail.appendChild(el("p", { class: "tiny muted", text: "Preview — first 20 000 characters of the plain text." }));
+  detail.appendChild(el("p", { class: "tiny muted", text: `Preview — first 20 000 characters of the .${previewFmt}.` }));
   detail.appendChild(pre);
 
   try {
-    const response = await fetch(`/download/${job.id}/${index}/txt?limit=20000`);
+    const response = await fetch(`/download/${job.id}/${index}/${previewFmt}?limit=20000`);
     if (token !== detailToken) return;
     pre.textContent = response.ok ? await response.text() : "preview unavailable";
   } catch {
@@ -617,55 +668,46 @@ async function showDetail(job, index) {
 
 /* ------------------------------------------------------------------- queue */
 function addEntries(entries) {
+  const before = state.queue.length;
   for (const entry of entries) {
     const item = queueItem(entry);
     if (state.queue.some((existing) => existing.path === item.path)) continue;
     state.queue.push(item);
   }
   renderQueue();
+  return state.queue.length - before;
 }
 
-async function uploadFile(file, index, total) {
-  return new Promise((resolve) => {
-    const xhr = new XMLHttpRequest();
-    const url = `/api/upload?name=${encodeURIComponent(file.name)}`;
-    xhr.open("POST", url);
-    xhr.setRequestHeader("X-Whisper", "1");
-    xhr.upload.onprogress = (event) => {
-      if (!event.lengthComputable) return;
-      const pct = ((event.loaded / event.total) * 100).toFixed(0);
-      $("upload-status").textContent = `uploading ${file.name} (${index} of ${total}) — ${pct}%`;
-    };
-    xhr.onload = () => {
-      try {
-        const data = JSON.parse(xhr.responseText);
-        if (xhr.status >= 400) { showAlert($("alerts"), "error", `${file.name}: ${data.error}`); resolve(null); }
-        else resolve(data);
-      } catch {
-        showAlert($("alerts"), "error", `${file.name}: unreadable server response`);
-        resolve(null);
-      }
-    };
-    xhr.onerror = () => { showAlert($("alerts"), "error", `${file.name}: upload failed`); resolve(null); };
-    xhr.send(file);
-  });
-}
-
-async function uploadFiles(files) {
-  const list = [...files];
-  if (!list.length) return;
-  const total = list.length;
-  const entries = [];
-  for (const [index, file] of list.entries()) {
-    if (state.config.max_upload_bytes && file.size > state.config.max_upload_bytes) {
-      showAlert($("alerts"), "error", `${file.name} is larger than the ${Math.round(state.config.max_upload_bytes / 1e9)} GB limit`);
-      continue;
+async function pickPaths(kind) {
+  const status = $("pick-status");
+  const setStatus = (text) => {
+    status.textContent = text;
+    status.classList.toggle("hidden", !text);
+  };
+  const buttons = [$("pick-files"), $("pick-folder")];
+  for (const button of buttons) button.disabled = true;
+  setStatus("waiting for the file dialog on this computer…");
+  try {
+    const data = await api("/api/pick", { method: "POST", json: { kind } });
+    clear($("alerts"));
+    for (const problem of data.problems || []) showAlert($("alerts"), "warn", problem);
+    if (data.cancelled) {
+      setStatus("dialog cancelled — nothing added");
+      return;
     }
-    const entry = await uploadFile(file, index + 1, total);
-    if (entry) entries.push(entry);
+    const entries = data.entries || [];
+    const added = addEntries(entries);
+    const total = entries.length;
+    if (!total) setStatus("nothing to add from that selection");
+    else if (added === total) setStatus(`added ${added} file(s)`);
+    else if (added) setStatus(`added ${added} of ${total} — ${total - added} already queued`);
+    else setStatus(`all ${total} already queued`);
+  } catch (error) {
+    setStatus("");
+    showAlert($("alerts"), "error", error.message);
+  } finally {
+    for (const button of buttons) button.disabled = false;
   }
-  $("upload-status").textContent = entries.length ? `added ${entries.length} file(s)` : "";
-  addEntries(entries);
 }
 
 async function addPaths() {
@@ -774,6 +816,7 @@ async function refreshConfig(previousJob) {
   state.config = config;
   renderEnv();
   renderDownloadPanel();
+  renderPicker();
   const modelBefore = $("model").value;
   renderModels(modelBefore || config.defaults.model);
   $("device").innerHTML = "";
@@ -793,20 +836,8 @@ async function refreshConfig(previousJob) {
 }
 
 async function boot() {
-  const drop = $("drop");
-  const input = $("file-input");
-  drop.addEventListener("click", () => input.click());
-  drop.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") input.click(); });
-  input.addEventListener("change", () => { uploadFiles(input.files); input.value = ""; });
-  for (const type of ["dragenter", "dragover"]) {
-    drop.addEventListener(type, (event) => { event.preventDefault(); drop.classList.add("over"); });
-  }
-  for (const type of ["dragleave", "drop"]) {
-    drop.addEventListener(type, (event) => { event.preventDefault(); drop.classList.remove("over"); });
-  }
-  drop.addEventListener("drop", (event) => {
-    if (event.dataTransfer && event.dataTransfer.files.length) uploadFiles(event.dataTransfer.files);
-  });
+  $("pick-files").addEventListener("click", () => pickPaths("files"));
+  $("pick-folder").addEventListener("click", () => pickPaths("folder"));
 
   $("add-paths").addEventListener("click", addPaths);
   $("clear-queue").addEventListener("click", () => { state.queue = []; renderQueue(); });
@@ -814,6 +845,7 @@ async function boot() {
   $("cancel-btn").addEventListener("click", cancelJob);
   $("download-btn").addEventListener("click", startDownload);
   $("use-vad").addEventListener("change", saveSettings);
+  $("save-sidecars").addEventListener("change", saveSettings);
   $("model").addEventListener("change", () => { renderModelHint(); saveSettings(); });
 
   try {

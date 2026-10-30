@@ -12,7 +12,12 @@ Design notes that matter for behaviour:
 * **Transcription runs in a thread**, the browser polls ``/api/job`` every
   ~600 ms. Long files therefore survive a page reload, and no request is held
   open for minutes.
-* **Uploads stream to disk** in 1 MiB chunks — a 4 GB video never sits in RAM.
+* **Picking files opens a dialog on this machine, not in the browser.** The page
+  asks the server to run its native picker (WinForms via PowerShell, `osascript`,
+  `zenity`/`kdialog`, or tkinter) and gets back absolute paths. Nothing is
+  uploaded or copied: a 4 GB source is read where it already lives, so there is
+  no temp directory to fill and no second copy on disk. The dialog blocks its own
+  request, which is why it runs on a thread and refuses to open twice.
 * **Cancel is cooperative**: the flag is checked in the progress callback, so it
   takes effect at the next decoded block rather than after the whole file.
 * **Bound to 127.0.0.1** and POSTs require an ``X-Whisper`` header, so a random
@@ -28,8 +33,6 @@ import argparse
 import json
 import mimetypes
 import os
-import re
-import tempfile
 import threading
 import time
 import traceback
@@ -40,20 +43,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from . import fetch, models
+from . import fetch, filedialog, models
 from .audio import AudioExtractionError, MediaInfo, probe
 from .batch import BatchItem, BatchOutcome, expand_inputs, parse_path_text, run_batch
 from .engine import ModelLoadError, Transcriber, VadOptions
 from .export import FORMATS, bundle_zip, filename, payloads
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-UPLOAD_DIR = Path(tempfile.gettempdir()) / "python-whisper-uploads"
 
 #: Formats offered by the UI. The CLI default stays narrower (txt,srt).
 UI_FORMATS: tuple[str, ...] = FORMATS
-
-#: Refuse anything larger than this, so a stray drag of a disk image fails fast.
-MAX_UPLOAD_BYTES = int(os.environ.get("WHISPER_MAX_UPLOAD_GB", "16")) * 1000**3
 
 #: How many finished jobs keep their results downloadable. Each holds the full
 #: segment tuples, so this is a memory ceiling, not a history feature.
@@ -89,13 +88,6 @@ def human_size(num_bytes: int) -> str:
     if num_bytes < 1_000_000_000:
         return f"{num_bytes / 1e6:.1f} MB"
     return f"{num_bytes / 1e9:.2f} GB"
-
-
-def safe_name(raw: str) -> str:
-    """Strip any directory part from an uploaded name and forbid separators."""
-    name = Path(str(raw).replace("\\", "/")).name
-    name = re.sub(r"[^\w.\- ()]", "_", name).strip(" .")
-    return name or "upload.bin"
 
 
 def probe_entry(path: Path) -> dict[str, Any]:
@@ -174,6 +166,7 @@ class Settings:
     max_cue: float
     formats: tuple[str, ...]
     stream_index: int | None = None
+    save_sidecars: bool = False
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> Settings:
@@ -207,7 +200,17 @@ class Settings:
 
         formats = tuple(fmt for fmt in payload.get("formats", UI_FORMATS) if isinstance(fmt, str))
         formats = tuple(fmt for fmt in formats if fmt in UI_FORMATS) or UI_FORMATS
-        return cls(model_key, device, threads, vad, max_chars, max_cue, formats, stream_index)
+        return cls(
+            model_key,
+            device,
+            threads,
+            vad,
+            max_chars,
+            max_cue,
+            formats,
+            stream_index,
+            save_sidecars=_as_bool(payload, "save_sidecars", False),
+        )
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -217,6 +220,7 @@ class Settings:
             "use_vad": self.vad is not None,
             "stream_index": self.stream_index,
             "formats": list(self.formats),
+            "save_sidecars": self.save_sidecars,
         }
 
 
@@ -326,7 +330,9 @@ class Job:
                     "words": item.result.word_count if item.result else None,
                     "duration": item.result.media.duration_label if item.result else None,
                     "rtf": item.result.rtf if item.result else None,
-                    "formats": list(UI_FORMATS) if item.result else [],
+                    "formats": list(self.settings.formats)
+                    if (item.result and self.settings)
+                    else [],
                     "error": item.error,
                 }
                 for index, item in enumerate(outcome.items)
@@ -425,6 +431,7 @@ class AppState:
                 vad=settings.vad,
                 formats=settings.formats,
                 stream_index=settings.stream_index,
+                write_files=settings.save_sidecars,
                 max_chars=settings.max_chars,
                 max_cue=settings.max_cue,
                 on_progress=on_progress,
@@ -567,11 +574,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - stdlib name
         parsed = urllib.parse.urlparse(self.path)
         route = parsed.path
-        query = urllib.parse.parse_qs(parsed.query)
         try:
-            if route == "/api/upload":
+            if route == "/api/pick":
                 self._check_origin()
-                return self._json(self.handle_upload(query))
+                return self._json(self.handle_pick())
             self._check_origin()
             if route == "/api/paths":
                 return self._json(self.handle_paths())
@@ -630,8 +636,7 @@ class Handler(BaseHTTPRequestHandler):
                 "max_chars": 84,
                 "max_cue": 6.0,
             },
-            "upload_dir": str(UPLOAD_DIR),
-            "max_upload_bytes": MAX_UPLOAD_BYTES,
+            "dialog": filedialog.describe(),
             "job": (active or latest).snapshot() if (active or latest) else None,
             "busy": active is not None,
         }
@@ -645,39 +650,31 @@ class Handler(BaseHTTPRequestHandler):
         data["busy"] = STATE.active() is not None
         return data
 
-    # -- uploads ---------------------------------------------------------- #
-    def handle_upload(self, query: dict[str, list[str]]) -> dict[str, Any]:
-        name = safe_name((query.get("name") or ["upload.bin"])[0])
-        length = int(self.headers.get("Content-Length") or 0)
-        if length <= 0:
-            raise BadRequest("empty upload")
-        if length > MAX_UPLOAD_BYTES:
-            raise BadRequest(f"file too large: {human_size(length)}")
+    # -- native picker ---------------------------------------------------- #
+    def handle_pick(self) -> dict[str, Any]:
+        """Open the dialog on the server's desktop; return the chosen paths, probed.
 
-        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-        target = UPLOAD_DIR / name
-        counter = 2
-        while target.exists() and target.stat().st_size != length:
-            target = UPLOAD_DIR / f"{Path(name).stem} ({counter}){Path(name).suffix}"
-            counter += 1
-
-        partial = target.with_name(target.name + ".part")
-        remaining = length
-        with partial.open("wb") as sink:
-            while remaining > 0:
-                chunk = self.rfile.read(min(1 << 20, remaining))
-                if not chunk:
-                    break
-                sink.write(chunk)
-                remaining -= len(chunk)
-        if remaining > 0:
-            partial.unlink(missing_ok=True)
-            raise BadRequest("upload truncated")
-        partial.replace(target)
-
-        entry = probe_entry(target)
-        entry["uploaded"] = True
-        return entry
+        Nothing is uploaded: the browser receives paths and the server reads the files
+        where they already live, so a 4 GB source costs no copy and no temp space.
+        """
+        payload = self._body()
+        kind = str(payload.get("kind") or "files")
+        try:
+            chosen = filedialog.pick(kind)
+        except filedialog.DialogBusy as exc:
+            raise BadRequest(str(exc)) from None
+        except (filedialog.DialogUnavailable, filedialog.DialogFailed) as exc:
+            raise BadRequest(str(exc)) from None
+        except ValueError as exc:
+            raise BadRequest(str(exc)) from None
+        if not chosen:
+            return {"cancelled": True, "entries": [], "problems": []}
+        files, problems = expand_inputs([str(path) for path in chosen])
+        return {
+            "cancelled": False,
+            "entries": [probe_entry(path) for path in files],
+            "problems": problems,
+        }
 
     def handle_paths(self) -> dict[str, Any]:
         payload = self._body()
@@ -803,6 +800,12 @@ class Handler(BaseHTTPRequestHandler):
             raise BadRequest(f"unknown format {fmt!r}")
 
         settings = job.settings
+        # Only what the run was asked to export is served: an unchecked format
+        # is one the user said they did not want, and the preview fetches the
+        # first selected format rather than always assuming plain text.
+        selected = settings.formats if settings else UI_FORMATS
+        if fmt not in selected:
+            raise FileNotFoundError(f"{fmt} was not selected for this run")
         text = payloads(
             item.result,
             (fmt,),
